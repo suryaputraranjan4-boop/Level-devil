@@ -76,6 +76,76 @@ class QLearningAgentTest {
     }
 
     @Test
+    fun `in progress outcome cannot be counted as a terminal win or death`() {
+        val agent = QLearningAgent(learningRate = 0.5f, discountFactor = 0.9f)
+        val state = RLState(1, 0, 2, true, false)
+
+        agent.update(
+            Transition(
+                state = state,
+                action = PlayerAction.MOVE_RIGHT,
+                actionDispatched = true,
+                reward = 25f,
+                rewardReason = "inconsistent terminal flag",
+                nextState = state,
+                outcome = EpisodeOutcome.IN_PROGRESS,
+                isTerminal = true
+            )
+        )
+
+        val metrics = agent.getMetrics()
+        assertEquals("IN_PROGRESS must not become a verified episode", 0, metrics.totalEpisodes)
+        assertEquals("IN_PROGRESS must not become a win", 0, metrics.wins)
+        assertEquals("IN_PROGRESS must not become a death", 0, metrics.deaths)
+    }
+
+    @Test
+    fun `simulation steps are not reported as Android touch dispatches`() {
+        val agent = QLearningAgent()
+        val state = RLState(0, 0, 2, true, false)
+
+        agent.update(
+            Transition(
+                state = state,
+                action = PlayerAction.MOVE_RIGHT,
+                actionDispatched = true,
+                reward = 1f,
+                rewardReason = "synthetic step",
+                nextState = state,
+                outcome = EpisodeOutcome.IN_PROGRESS,
+                isTerminal = false,
+                isSimulation = true
+            )
+        )
+
+        val metrics = agent.getMetrics()
+        assertEquals("Simulation must not claim OS-dispatched gestures", 0L, metrics.actionsDispatched)
+        assertEquals("Simulation must not claim rejected OS gestures", 0L, metrics.actionsRejected)
+    }
+
+    @Test
+    fun `inference only failure memory cannot change policy Q values`() {
+        val agent = QLearningAgent(isInferenceOnly = true)
+        val state = RLState(0, 0, 2, true, false)
+        val before = agent.getQValues(state)[PlayerAction.MOVE_RIGHT] ?: 0f
+
+        agent.recordFailure(
+            com.example.agent.FailureTrace(
+                levelNumber = 1,
+                deathPosition = android.graphics.PointF(0.2f, 0.6f),
+                nearestHazardPosition = android.graphics.PointF(0.22f, 0.6f),
+                recentActions = listOf(PlayerAction.MOVE_RIGHT),
+                contributingAction = PlayerAction.MOVE_RIGHT,
+                isSimulation = false
+            )
+        )
+
+        val after = agent.getQValues(state)[PlayerAction.MOVE_RIGHT] ?: 0f
+        assertEquals("Inference-only mode must freeze Q values", before, after, 0.0001f)
+        assertTrue("Inference-only mode must not record new failure bias", agent.getRecentFailures().isEmpty())
+    }
+
+    @Test
     fun `test reward function rewards forward movement toward door`() {
         val rewardFn = RewardFunction()
 
