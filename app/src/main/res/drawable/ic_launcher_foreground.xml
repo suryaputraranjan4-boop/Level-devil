@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+
+    <!-- Devil Horns (Red/Amber) -->
+    <path
+        android:fillColor="#FF3B30"
+        android:pathData="M34,38 C32,29 25,23 23,21 C28,26 34,31 38,34 Z" />
+    <path
+        android:fillColor="#FF3B30"
+        android:pathData="M74,38 C76,29 83,23 85,21 C80,26 74,31 70,34 Z" />
+
+    <!-- Gamepad Body -->
+    <path
+        android:fillColor="#FFCC00"
+        android:pathData="M34,36 L74,36 C84,36 90,44 88,58 L85,73 C83,80 76,82 71,76 L63,68 L45,68 L37,76 C32,82 25,80 23,73 L20,58 C18,44 24,36 34,36 Z" />
+
+    <!-- Gamepad D-pad & Buttons in Dark Slate -->
+    <!-- D-pad on Left -->
+    <path
+        android:fillColor="#1A1829"
+        android:pathData="M32,46 H36 V50 H40 V54 H36 V58 H32 V54 H28 V50 H32 Z" />
+
+    <!-- Action Buttons on Right -->
+    <path
+        android:fillColor="#1A1829"
+        android:pathData="M74,48 A 3 3 0 1 0 74 54 A 3 3 0 1 0 74 48 Z" />
+    <path
+        android:fillColor="#FF3B30"
+        android:pathData="M80,54 A 3 3 0 1 0 80 60 A 3 3 0 1 0 80 54 Z" />
+
+    <!-- Center AI Eye / Lens Core -->
+    <path
+        android:fillColor="#1A1829"
+        android:pathData="M54,46 A 6 6 0 1 0 54 58 A 6 6 0 1 0 54 46 Z" />
+    <path
+        android:fillColor="#00F0FF"
+        android:pathData="M54,49 A 3 3 0 1 0 54 55 A 3 3 0 1 0 54 49 Z" />
+
+</vector>

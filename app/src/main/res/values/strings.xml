@@ -1,0 +1,9 @@
+<resources>
+    <string name="app_name">Level Devil AI</string>
+    <string name="accessibility_service_label">Level Devil AI Touch Dispatcher</string>
+    <string name="accessibility_service_description">Simulates precise screen taps and gestures to automate gameplay in Level Devil based on the AI reinforcement learning policy decisions.</string>
+    <string name="notification_channel_name">AI Screen Capture</string>
+    <string name="notification_channel_desc">Active screen frame capture and telemetry for Level Devil player</string>
+    <string name="notification_title">Level Devil AI Active</string>
+    <string name="notification_text">Analyzing gameplay frames and predicting optimal controls</string>
+</resources>

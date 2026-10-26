@@ -1,0 +1,6 @@
+{
+  "name": "Level Devil AI Player",
+  "description": "Reinforcement learning player foundation for Level Devil with MediaProjection screen capture, computer vision pipeline, Q-policy, and accessibility touch dispatch.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
