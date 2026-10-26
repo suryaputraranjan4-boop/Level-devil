@@ -16,7 +16,9 @@ data class TouchCalibration(
     var rightBtnX: Float = 0.32f,
     var rightBtnY: Float = 0.85f,
     var jumpBtnX: Float = 0.86f,
-    var jumpBtnY: Float = 0.85f
+    var jumpBtnY: Float = 0.85f,
+    var playerSeedX: Float = 0.50f,
+    var playerSeedY: Float = 0.55f
 )
 
 enum class InputStatus {
@@ -32,6 +34,30 @@ class InputController(
     private val context: Context
 ) {
     var calibration: TouchCalibration = TouchCalibration()
+
+    init {
+        val prefs = context.getSharedPreferences("level_devil_calibration", Context.MODE_PRIVATE)
+        calibration = TouchCalibration(
+            leftBtnX = prefs.getFloat("left_x", 0.14f),
+            leftBtnY = prefs.getFloat("left_y", 0.85f),
+            rightBtnX = prefs.getFloat("right_x", 0.32f),
+            rightBtnY = prefs.getFloat("right_y", 0.85f),
+            jumpBtnX = prefs.getFloat("jump_x", 0.86f),
+            jumpBtnY = prefs.getFloat("jump_y", 0.85f),
+            playerSeedX = prefs.getFloat("player_seed_x", 0.50f),
+            playerSeedY = prefs.getFloat("player_seed_y", 0.55f)
+        )
+    }
+
+    fun saveCalibration() {
+        context.getSharedPreferences("level_devil_calibration", Context.MODE_PRIVATE)
+            .edit()
+            .putFloat("left_x", calibration.leftBtnX).putFloat("left_y", calibration.leftBtnY)
+            .putFloat("right_x", calibration.rightBtnX).putFloat("right_y", calibration.rightBtnY)
+            .putFloat("jump_x", calibration.jumpBtnX).putFloat("jump_y", calibration.jumpBtnY)
+            .putFloat("player_seed_x", calibration.playerSeedX).putFloat("player_seed_y", calibration.playerSeedY)
+            .apply()
+    }
 
     private val _status = MutableStateFlow(InputStatus.DISCONNECTED_DISABLED)
     val status: StateFlow<InputStatus> = _status.asStateFlow()
