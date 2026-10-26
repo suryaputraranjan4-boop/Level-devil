@@ -97,7 +97,8 @@ data class DashboardState(
     val jumpBtnY: Float = 0.85f,
     val playerSeedX: Float = 0.50f,
     val playerSeedY: Float = 0.55f,
-    val currentLevel: Int = 1,
+    // 0 means unknown: live level OCR/detection is not implemented yet.
+    val currentLevel: Int = 0,
     val statusMessage: String = "Ready"
 )
 
@@ -694,7 +695,7 @@ class FramePipeline(
                 playerVelocityDesc = velocityText,
                 nextObstacleDesc = nextObstacleText,
                 lastActionResult = dispatchResultMsg,
-                currentLevel = if (isSim) simLevel else 1
+                currentLevel = if (isSim) simLevel else 0
             )
         } catch (e: Exception) {
             e.printStackTrace()
