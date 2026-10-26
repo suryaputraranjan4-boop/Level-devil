@@ -511,9 +511,11 @@ class FramePipeline(
                     when (rewardDetail.outcome) {
                         EpisodeOutcome.WIN -> simWins++
                         EpisodeOutcome.DEATH -> simDeaths++
-                        EpisodeOutcome.UNKNOWN, EpisodeOutcome.IN_PROGRESS -> simUnknowns++
+                        EpisodeOutcome.UNKNOWN, EpisodeOutcome.IN_PROGRESS -> Unit
                     }
                 }
+                // Count uncertain observations separately from completed episodes.
+                if (rewardDetail.outcome == EpisodeOutcome.UNKNOWN) simUnknowns++
                 val failureBox = pBox ?: previousObservation?.playerBox
                 val failureHazard = nearestHazard
                     ?: previousObservation?.detectedObjects?.firstOrNull {
