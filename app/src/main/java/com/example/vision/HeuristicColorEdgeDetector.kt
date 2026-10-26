@@ -346,8 +346,11 @@ class HeuristicColorEdgeDetector(
         // Detect Death screen ("OUCH" / "TRY AGAIN" or high red/black flash)
         val isDeathScreen = detectDeathScreen(pixelBuffer, w, h)
 
-        // Detect Victory screen
-        val isVictoryScreen = playerBox != null && doorBox != null && playerBox.intersect(doorBox)
+        // Door overlap is only a candidate exit event. This detector does not yet recognize
+        // a real completion overlay, so never label the overlap itself as a verified victory.
+        val isExitOverlap = playerBox != null && doorBox != null &&
+            android.graphics.RectF.intersects(playerBox, doorBox)
+        val isVictoryScreen = false
 
         val latencyMs = (System.nanoTime() - startTime) / 1_000_000
 
@@ -362,6 +365,7 @@ class HeuristicColorEdgeDetector(
             movingTrapNearby = movingTrapNearby,
             isDeathScreen = isDeathScreen,
             isVictoryScreen = isVictoryScreen,
+            isExitOverlap = isExitOverlap,
             detectedObjects = detectedObjects,
             frameWidth = currentFrame.width,
             frameHeight = currentFrame.height,
