@@ -89,12 +89,17 @@ class QLearningAgent(
     }
 
     override fun update(transition: Transition): Float {
-        // Track dispatch status
-        if (transition.actionDispatched) {
-            actionsDispatched++
-        } else {
-            actionsRejected++
-            // CRITICAL: Do not update Q-value if Android rejected or canceled the touch
+        // Simulation actions are internal decisions, not Android touch dispatches.
+        if (!transition.isSimulation) {
+            if (transition.actionDispatched) {
+                actionsDispatched++
+            } else {
+                actionsRejected++
+                // Do not update Q-values for a rejected/canceled real gesture.
+                return 0f
+            }
+        } else if (!transition.actionDispatched) {
+            // A simulation step that did not execute must not train the policy.
             return 0f
         }
 
@@ -118,9 +123,14 @@ class QLearningAgent(
         val actionIdx = transition.action.ordinal
         val currentQ = qValues[actionIdx]
 
+        // Only explicit terminal outcomes may end an episode. IN_PROGRESS must
+        // never be inferred as a win/death from the reward sign.
+        val isVerifiedTerminal = transition.isTerminal &&
+            transition.outcome != EpisodeOutcome.IN_PROGRESS
+
         // Q-Learning Bellman Update
         // For terminal states, NO bootstrapping from next state!
-        val tdTarget = if (transition.isTerminal) {
+        val tdTarget = if (isVerifiedTerminal) {
             transition.reward
         } else {
             val nextQValues = getOrCreateQValues(transition.nextState.key)
@@ -136,17 +146,15 @@ class QLearningAgent(
         qValues[actionIdx] = currentQ + learningRate * tdError
 
         // Handle terminal episode outcomes
-        if (transition.isTerminal) {
+        if (isVerifiedTerminal) {
             totalEpisodes++
             when (transition.outcome) {
                 EpisodeOutcome.WIN -> wins++
                 EpisodeOutcome.DEATH -> deaths++
                 EpisodeOutcome.UNKNOWN -> unknowns++
-                else -> {
-                    if (transition.reward > 0) wins++ else deaths++
-                }
+                EpisodeOutcome.IN_PROGRESS -> Unit
             }
-            // Decay epsilon after completing an episode
+            // Decay epsilon only after an explicit terminal outcome.
             epsilon = max(minEpsilon, epsilon * epsilonDecay)
         }
 
@@ -154,6 +162,9 @@ class QLearningAgent(
     }
 
     override fun recordFailure(trace: FailureTrace) {
+        // Inference-only means policy and policy-derived failure bias are frozen.
+        if (isInferenceOnly) return
+
         if (failureTraces.size >= 50) {
             failureTraces.removeAt(0)
         }
