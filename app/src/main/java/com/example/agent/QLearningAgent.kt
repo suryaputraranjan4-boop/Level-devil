@@ -162,13 +162,13 @@ class QLearningAgent(
     }
 
     override fun recordFailure(trace: FailureTrace) {
-        // Inference-only means policy and policy-derived failure bias are frozen.
-        if (isInferenceOnly) return
-
+        // Keep failure telemetry available in inference-only mode, but never alter
+        // policy weights while inference-only is enabled.
         if (failureTraces.size >= 50) {
             failureTraces.removeAt(0)
         }
         failureTraces.add(trace)
+        if (isInferenceOnly) return
 
         // Directly apply negative bias to contributing blunder action if known
         trace.contributingAction?.let { blunder ->
