@@ -172,13 +172,23 @@ class RewardFunction {
             )
         }
 
-        // 2. Verified Victory
+        // The detector currently infers exit overlap, not a real-game completion overlay.
+        // Synthetic simulation can use its known geometry as a simulated win; live gameplay
+        // must remain UNKNOWN until an actual completion screen/result is recognized.
         if (currObs.isVictoryScreen) {
-            return RewardDetail(
-                reward = if (isSimulation) 80.0f else 100.0f,
-                reason = "Level Completed (Reached Exit Door)",
-                outcome = EpisodeOutcome.WIN
-            )
+            return if (isSimulation) {
+                RewardDetail(
+                    reward = 80.0f,
+                    reason = "Synthetic exit reached (simulation result only)",
+                    outcome = EpisodeOutcome.WIN
+                )
+            } else {
+                RewardDetail(
+                    reward = 0.0f,
+                    reason = "Exit overlap detected; real completion is not verified",
+                    outcome = EpisodeOutcome.UNKNOWN
+                )
+            }
         }
 
         // 3. Uncertain / Observation Lost
