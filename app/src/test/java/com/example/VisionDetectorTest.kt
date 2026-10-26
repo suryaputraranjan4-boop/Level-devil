@@ -41,6 +41,22 @@ class VisionDetectorTest {
     }
 
     @Test
+    fun `door overlap is not falsely labeled as verified completion screen`() {
+        val frame = generator.generateFrame(
+            playerXPercent = 0.82f,
+            playerYPercent = 0.65f,
+            includeMovingTrap = false
+        )
+        val result = detector.processFrame(frame, null)
+
+        assertTrue("Door overlap may be tracked as a candidate exit event", result.observation.isExitOverlap)
+        org.junit.Assert.assertFalse(
+            "A player-door overlap alone must not be reported as a verified victory screen",
+            result.observation.isVictoryScreen
+        )
+    }
+
+    @Test
     fun `test temporal motion detection triggers on dynamic obstacle movement`() {
         // Frame 1 with trap at initial position
         val frame1 = generator.generateFrame(includeMovingTrap = true)
