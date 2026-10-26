@@ -287,9 +287,13 @@ class FramePipeline(
 
     fun toggleTraining() {
         val next = !_state.value.isTrainingActive
+        if (!next) {
+            // Do not train from a gesture that completes after the user pauses training.
+            pendingLiveAction = null
+        }
         _state.value = _state.value.copy(
             isTrainingActive = next,
-            statusMessage = if (next) "RL Training Loop ACTIVE" else "Training PAUSED (Inference Only)"
+            statusMessage = if (next) "RL Training Loop ACTIVE" else "Training PAUSED"
         )
     }
 
@@ -430,11 +434,16 @@ class FramePipeline(
                     inputController.dispatchAction(selectedAction, frame.width, frame.height) { success, latency ->
                         inputLatencyMs = latency
                         pending.dispatchSuccess = success
-                        dispatchResultMsg = if (success) {
+                        val resultMessage = if (success) {
                             "Android confirmed ${selectedAction.displayName} dispatch in ${latency}ms"
                         } else {
                             "Android canceled/rejected ${selectedAction.displayName} dispatch"
                         }
+                        _state.value = _state.value.copy(
+                            inputLatencyMs = latency,
+                            lastActionResult = resultMessage,
+                            inputStatus = inputController.status.value
+                        )
                     }
                 } else {
                     dispatchResultMsg = "Waiting for the previous gesture result; no overlapping action sent."
@@ -525,11 +534,11 @@ class FramePipeline(
                     rewardFunction.reset()
                     recentActionHistory.clear()
                 }
-            } else if (isTraining && !isSim) {
+            } else if (!isSim) {
                 val pending = pendingLiveAction
                 val dispatchSuccess = pending?.dispatchSuccess
                 if (pending != null && dispatchSuccess != null) {
-                    if (dispatchSuccess) {
+                    if (dispatchSuccess && isTraining) {
                         val rewardDetail = rewardFunction.calculateRewardDetail(
                             prevObs = pending.observation,
                             currObs = currObs,
@@ -597,12 +606,14 @@ class FramePipeline(
                             }
                         }
                         if (isTerminal) rewardFunction.reset()
-                    } else {
+                    } else if (dispatchSuccess == false) {
                         // Do not create a Q-learning transition for an OS-rejected gesture.
                         lastRewardVal = 0f
                         lastRewardReasonStr = "Gesture canceled/rejected; no learning update applied"
                         lastOutcomeVal = EpisodeOutcome.IN_PROGRESS
                     }
+                    // If training was paused or inference-only was enabled, consume the
+                    // completed gesture without changing the policy.
                     pendingLiveAction = null
                 }
             }
