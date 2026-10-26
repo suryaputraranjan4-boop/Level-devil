@@ -75,16 +75,23 @@ class MainViewModel : ViewModel() {
         }
     }
 
-    fun updateCalibration(leftX: Float, leftY: Float, rightX: Float, rightY: Float, jumpX: Float, jumpY: Float) {
+    fun updateCalibration(
+        leftX: Float, leftY: Float, rightX: Float, rightY: Float,
+        jumpX: Float, jumpY: Float, playerSeedX: Float, playerSeedY: Float
+    ) {
         pipeline.inputController.calibration.apply {
-            this.leftBtnX = leftX
-            this.leftBtnY = leftY
-            this.rightBtnX = rightX
-            this.rightBtnY = rightY
-            this.jumpBtnX = jumpX
-            this.jumpBtnY = jumpY
+            leftBtnX = leftX.coerceIn(0f, 1f)
+            leftBtnY = leftY.coerceIn(0f, 1f)
+            rightBtnX = rightX.coerceIn(0f, 1f)
+            rightBtnY = rightY.coerceIn(0f, 1f)
+            jumpBtnX = jumpX.coerceIn(0f, 1f)
+            jumpBtnY = jumpY.coerceIn(0f, 1f)
+            this.playerSeedX = playerSeedX.coerceIn(0f, 1f)
+            this.playerSeedY = playerSeedY.coerceIn(0f, 1f)
         }
-        _userFeedback.value = "Virtual button touch coordinates calibrated."
+        pipeline.inputController.saveCalibration()
+        pipeline.publishCalibration()
+        _userFeedback.value = "Calibration saved on this device, including the player tracking seed."
     }
 
     fun stopScreenCapture(context: Context) {
