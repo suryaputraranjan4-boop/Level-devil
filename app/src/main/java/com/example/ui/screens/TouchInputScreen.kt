@@ -1,6 +1,7 @@
 package com.example.ui.screens
 
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.layout.Arrangement
@@ -37,6 +38,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -47,6 +49,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -65,7 +68,7 @@ fun TouchInputScreen(
     state: DashboardState,
     onOpenAccessibilitySettings: () -> Unit,
     onRunSelfTest: (Int, Int) -> Unit,
-    onUpdateCalibration: (Float, Float, Float, Float, Float, Float) -> Unit,
+    onUpdateCalibration: (Float, Float, Float, Float, Float, Float, Float, Float) -> Unit,
     modifier: Modifier = Modifier
 ) {
     val scrollState = rememberScrollState()
@@ -77,12 +80,15 @@ fun TouchInputScreen(
     val screenHeightPx = with(density) { config.screenHeightDp.dp.roundToPx() }
 
     // Calibration coordinates (default Level Devil landscape positions)
-    var leftX by remember { mutableFloatStateOf(0.14f) }
-    var leftY by remember { mutableFloatStateOf(0.85f) }
-    var rightX by remember { mutableFloatStateOf(0.32f) }
-    var rightY by remember { mutableFloatStateOf(0.85f) }
-    var jumpX by remember { mutableFloatStateOf(0.86f) }
-    var jumpY by remember { mutableFloatStateOf(0.85f) }
+    var leftX by remember(state.leftBtnX) { mutableFloatStateOf(state.leftBtnX) }
+    var leftY by remember(state.leftBtnY) { mutableFloatStateOf(state.leftBtnY) }
+    var rightX by remember(state.rightBtnX) { mutableFloatStateOf(state.rightBtnX) }
+    var rightY by remember(state.rightBtnY) { mutableFloatStateOf(state.rightBtnY) }
+    var jumpX by remember(state.jumpBtnX) { mutableFloatStateOf(state.jumpBtnX) }
+    var jumpY by remember(state.jumpBtnY) { mutableFloatStateOf(state.jumpBtnY) }
+    var playerSeedX by remember(state.playerSeedX) { mutableFloatStateOf(state.playerSeedX) }
+    var playerSeedY by remember(state.playerSeedY) { mutableFloatStateOf(state.playerSeedY) }
+    var activeHandle by remember { mutableIntStateOf(-1) }
 
     Column(
         modifier = modifier
@@ -234,6 +240,32 @@ fun TouchInputScreen(
                         .clip(RoundedCornerShape(8.dp))
                         .background(Color(0xFF0B0C12))
                         .border(1.dp, CardBorder, RoundedCornerShape(8.dp))
+                        .pointerInput(Unit) {
+                            detectDragGestures(
+                                onDragStart = { touch ->
+                                    val points = listOf(
+                                        Offset(leftX * size.width, leftY * size.height),
+                                        Offset(rightX * size.width, rightY * size.height),
+                                        Offset(jumpX * size.width, jumpY * size.height),
+                                        Offset(playerSeedX * size.width, playerSeedY * size.height)
+                                    )
+                                    activeHandle = points.indices.minByOrNull { (points[it] - touch).getDistance() } ?: -1
+                                },
+                                onDragEnd = { activeHandle = -1 },
+                                onDragCancel = { activeHandle = -1 },
+                                onDrag = { change, _ ->
+                                    change.consume()
+                                    val nx = (change.position.x / size.width).coerceIn(0.02f, 0.98f)
+                                    val ny = (change.position.y / size.height).coerceIn(0.02f, 0.98f)
+                                    when (activeHandle) {
+                                        0 -> { leftX = nx; leftY = ny }
+                                        1 -> { rightX = nx; rightY = ny }
+                                        2 -> { jumpX = nx; jumpY = ny }
+                                        3 -> { playerSeedX = nx; playerSeedY = ny }
+                                    }
+                                }
+                            )
+                        }
                 ) {
                     Canvas(modifier = Modifier.fillMaxSize()) {
                         val w = size.width
@@ -254,11 +286,10 @@ fun TouchInputScreen(
                         )
 
                         // Draw Jump Button target
-                        drawCircle(
-                            color = CyberCyan,
-                            radius = 28f,
-                            center = Offset(jumpX * w, jumpY * h)
-                        )
+                        drawCircle(color = CyberCyan, radius = 28f, center = Offset(jumpX * w, jumpY * h))
+                        drawCircle(color = CyberGreen, radius = 20f, center = Offset(playerSeedX * w, playerSeedY * h))
+                        drawCircle(color = Color.White, radius = 25f, center = Offset(playerSeedX * w, playerSeedY * h),
+                            style = androidx.compose.ui.graphics.drawscope.Stroke(width = 2f))
                     }
 
                     // Labels
@@ -294,10 +325,16 @@ fun TouchInputScreen(
                 Text("Jump Button (X: ${(jumpX * 100).toInt()}%, Y: ${(jumpY * 100).toInt()}%)", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                 Slider(value = jumpX, onValueChange = { jumpX = it }, valueRange = 0.60f..0.95f)
 
+                Text(
+                    "Player seed (X: ${(playerSeedX * 100).toInt()}%, Y: ${(playerSeedY * 100).toInt()}%) — drag the green marker onto the player before capture starts.",
+                    fontSize = 12.sp, color = CyberGreen
+                )
+                Text("Drag any of the four markers to adjust both X and Y. Saving stores all coordinates on this device.",
+                    fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Spacer(modifier = Modifier.height(10.dp))
 
                 Button(
-                    onClick = { onUpdateCalibration(leftX, leftY, rightX, rightY, jumpX, jumpY) },
+                    onClick = { onUpdateCalibration(leftX, leftY, rightX, rightY, jumpX, jumpY, playerSeedX, playerSeedY) },
                     modifier = Modifier
                         .fillMaxWidth()
                         .testTag("save_calibration_button"),
