@@ -152,7 +152,7 @@ class QLearningAgentTest {
             playerDetected = true,
             playerBox = android.graphics.RectF(0.82f, 0.55f, 0.90f, 0.68f),
             doorBox = android.graphics.RectF(0.82f, 0.54f, 0.93f, 0.75f),
-            isVictoryScreen = true
+            isExitOverlap = true
         )
 
         val realResult = rewardFn.calculateRewardDetail(
