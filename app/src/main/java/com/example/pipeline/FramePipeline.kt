@@ -55,6 +55,14 @@ data class DashboardState(
     val isTrainingActive: Boolean = false,
     val sourceMode: PipelineSourceMode = PipelineSourceMode.SYNTHETIC_SIMULATION,
     val inputStatus: InputStatus = InputStatus.DISCONNECTED_DISABLED,
+    val leftBtnX: Float = 0.14f,
+    val leftBtnY: Float = 0.85f,
+    val rightBtnX: Float = 0.32f,
+    val rightBtnY: Float = 0.85f,
+    val jumpBtnX: Float = 0.86f,
+    val jumpBtnY: Float = 0.85f,
+    val playerSeedX: Float = 0.50f,
+    val playerSeedY: Float = 0.55f,
     val statusMessage: String = "Ready"
 )
 
@@ -70,8 +78,29 @@ class FramePipeline(
     val inputController = InputController(context)
     val syntheticGenerator = SyntheticLevelDevilFrameGenerator()
 
-    private val _state = MutableStateFlow(DashboardState())
+    private val _state = MutableStateFlow(
+        DashboardState(
+            leftBtnX = inputController.calibration.leftBtnX,
+            leftBtnY = inputController.calibration.leftBtnY,
+            rightBtnX = inputController.calibration.rightBtnX,
+            rightBtnY = inputController.calibration.rightBtnY,
+            jumpBtnX = inputController.calibration.jumpBtnX,
+            jumpBtnY = inputController.calibration.jumpBtnY,
+            playerSeedX = inputController.calibration.playerSeedX,
+            playerSeedY = inputController.calibration.playerSeedY
+        )
+    )
     val state: StateFlow<DashboardState> = _state.asStateFlow()
+
+    fun publishCalibration() {
+        val c = inputController.calibration
+        _state.value = _state.value.copy(
+            leftBtnX = c.leftBtnX, leftBtnY = c.leftBtnY,
+            rightBtnX = c.rightBtnX, rightBtnY = c.rightBtnY,
+            jumpBtnX = c.jumpBtnX, jumpBtnY = c.jumpBtnY,
+            playerSeedX = c.playerSeedX, playerSeedY = c.playerSeedY
+        )
+    }
 
     private var previousFrame: Bitmap? = null
     private var previousObservation: GameObservation? = null
