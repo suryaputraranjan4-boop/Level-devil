@@ -179,6 +179,9 @@ class FramePipeline(
     // Synthetic simulation state
     private var simPlayerX = 0.20f
     private var simPlayerY = 0.65f
+    private var simVelocityY = 0f
+    private var simTrapXPercent = 0.50f
+    private var simTrapDirection = 1f
     private var simLevel = 1
 
     // Simulation isolated metrics
@@ -719,40 +722,90 @@ class FramePipeline(
         }
     }
 
+    private data class SimulationFrameResult(
+        val frame: Bitmap,
+        val isDeath: Boolean,
+        val isWin: Boolean
+    )
+
+    private fun advanceSimulationFrame(action: PlayerAction): SimulationFrameResult {
+        fun inPit(x: Float): Boolean = x in 0.40f..0.44f || x in 0.56f..0.61f
+
+        val groundedBeforeAction = simVelocityY == 0f && !inPit(simPlayerX) && simPlayerY <= 0.66f
+        if (groundedBeforeAction &&
+            (action == PlayerAction.JUMP || action == PlayerAction.LEFT_JUMP || action == PlayerAction.RIGHT_JUMP)
+        ) {
+            simVelocityY = -0.105f
+        }
+
+        when (action) {
+            PlayerAction.MOVE_RIGHT, PlayerAction.RIGHT_JUMP ->
+                simPlayerX = (simPlayerX + 0.025f).coerceAtMost(0.92f)
+            PlayerAction.MOVE_LEFT, PlayerAction.LEFT_JUMP ->
+                simPlayerX = (simPlayerX - 0.025f).coerceAtLeast(0.06f)
+            else -> Unit
+        }
+
+        // Move the same trap coordinate that the synthetic frame renderer displays.
+        simTrapXPercent += simTrapDirection * 0.025f
+        if (simTrapXPercent >= 0.60f) {
+            simTrapXPercent = 0.60f
+            simTrapDirection = -1f
+        } else if (simTrapXPercent <= 0.40f) {
+            simTrapXPercent = 0.40f
+            simTrapDirection = 1f
+        }
+
+        val overPit = inPit(simPlayerX)
+        if (simVelocityY != 0f) {
+            simPlayerY += simVelocityY
+            simVelocityY += 0.018f // gravity per simulation tick
+            if (simPlayerY >= 0.65f && !overPit) {
+                simPlayerY = 0.65f
+                simVelocityY = 0f
+            }
+        } else if (overPit) {
+            simPlayerY = (simPlayerY + 0.025f).coerceAtMost(0.95f)
+        } else {
+            simPlayerY = 0.65f
+        }
+
+        val trapCollision = abs(simPlayerX - simTrapXPercent) < 0.055f &&
+            abs(simPlayerY - 0.45f) < 0.085f
+        val isDeath = (overPit && simPlayerY >= 0.74f) || simPlayerY >= 0.90f || trapCollision
+        val isWin = !isDeath && simPlayerX >= 0.80f && simPlayerY in 0.50f..0.75f
+
+        val frame = syntheticGenerator.generateFrame(
+            playerXPercent = simPlayerX,
+            playerYPercent = if (isDeath) 0.82f else simPlayerY,
+            includeMovingTrap = true,
+            showDeathScreen = isDeath,
+            levelNumber = simLevel,
+            movingTrapXPercent = simTrapXPercent
+        )
+        return SimulationFrameResult(frame, isDeath, isWin)
+    }
+
+    private fun resetSimulationAfterTerminal(isWin: Boolean) {
+        if (isWin) simLevel++
+        simPlayerX = 0.15f
+        simPlayerY = 0.65f
+        simVelocityY = 0f
+    }
+
     fun startSimulationRunner() {
         if (simulationJob?.isActive == true) return
 
         simulationJob = scope.launch {
             while (isActive && _state.value.sourceMode == PipelineSourceMode.SYNTHETIC_SIMULATION) {
                 val startNs = System.nanoTime()
-
-                when (_state.value.currentAction) {
-                    PlayerAction.MOVE_RIGHT, PlayerAction.RIGHT_JUMP -> simPlayerX = (simPlayerX + 0.035f).coerceAtMost(0.92f)
-                    PlayerAction.MOVE_LEFT, PlayerAction.LEFT_JUMP -> simPlayerX = (simPlayerX - 0.035f).coerceAtLeast(0.06f)
-                    else -> {}
-                }
-
-                val inPit = (simPlayerX in 0.40f..0.43f || simPlayerX in 0.57f..0.60f)
-                val reachedDoor = simPlayerX >= 0.85f
-
-                val isDeath = inPit
-                val isWin = reachedDoor
-
-                val frame = syntheticGenerator.generateFrame(
-                    playerXPercent = simPlayerX,
-                    playerYPercent = if (isDeath) 0.82f else 0.65f,
-                    includeMovingTrap = true,
-                    showDeathScreen = isDeath,
-                    levelNumber = simLevel
-                )
-
+                val result = advanceSimulationFrame(_state.value.currentAction)
                 val captureLatencyMs = (System.nanoTime() - startNs) / 1_000_000
-                processFramePipeline(frame, captureLatencyMs)
+                processFramePipeline(result.frame, captureLatencyMs)
 
-                if (isDeath || isWin) {
+                if (result.isDeath || result.isWin) {
                     delay(250)
-                    if (isWin) simLevel++
-                    simPlayerX = 0.15f
+                    resetSimulationAfterTerminal(result.isWin)
                 }
 
                 delay(50)
@@ -768,20 +821,12 @@ class FramePipeline(
     fun stepSimulationOnce() {
         scope.launch {
             val startNs = System.nanoTime()
-            when (_state.value.currentAction) {
-                PlayerAction.MOVE_RIGHT, PlayerAction.RIGHT_JUMP -> simPlayerX = (simPlayerX + 0.035f).coerceAtMost(0.92f)
-                PlayerAction.MOVE_LEFT, PlayerAction.LEFT_JUMP -> simPlayerX = (simPlayerX - 0.035f).coerceAtLeast(0.06f)
-                else -> {}
-            }
-            val frame = syntheticGenerator.generateFrame(
-                playerXPercent = simPlayerX,
-                playerYPercent = 0.65f,
-                includeMovingTrap = true,
-                showDeathScreen = false,
-                levelNumber = simLevel
-            )
+            val result = advanceSimulationFrame(_state.value.currentAction)
             val captureLatencyMs = (System.nanoTime() - startNs) / 1_000_000
-            processFramePipeline(frame, captureLatencyMs)
+            processFramePipeline(result.frame, captureLatencyMs)
+            if (result.isDeath || result.isWin) {
+                resetSimulationAfterTerminal(result.isWin)
+            }
         }
     }
 
