@@ -27,11 +27,31 @@ interface AppDao {
 
     @Query("SELECT * FROM training_sessions ORDER BY startTime DESC LIMIT 20")
     fun getRecentSessions(): Flow<List<TrainingSessionEntity>>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertFailure(failure: FailureMemoryEntity): Long
+
+    @Query("SELECT * FROM failure_memories ORDER BY timestamp DESC LIMIT :limit")
+    fun getRecentFailures(limit: Int = 20): Flow<List<FailureMemoryEntity>>
+
+    @Query("SELECT * FROM failure_memories WHERE levelNumber = :level ORDER BY timestamp DESC")
+    suspend fun getFailuresForLevel(level: Int): List<FailureMemoryEntity>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertEpisodeLog(episode: EpisodeLogEntity): Long
+
+    @Query("SELECT * FROM episode_logs WHERE isSimulation = :isSimulation ORDER BY timestamp DESC LIMIT :limit")
+    fun getRecentEpisodes(isSimulation: Boolean, limit: Int = 20): Flow<List<EpisodeLogEntity>>
 }
 
 @Database(
-    entities = [CheckpointEntity::class, TrainingSessionEntity::class],
-    version = 1,
+    entities = [
+        CheckpointEntity::class,
+        TrainingSessionEntity::class,
+        FailureMemoryEntity::class,
+        EpisodeLogEntity::class
+    ],
+    version = 2,
     exportSchema = false
 )
 abstract class AppDatabase : RoomDatabase() {

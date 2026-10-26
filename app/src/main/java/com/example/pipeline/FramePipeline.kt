@@ -2,7 +2,10 @@ package com.example.pipeline
 
 import android.content.Context
 import android.graphics.Bitmap
+import android.graphics.PointF
 import com.example.agent.AgentMetrics
+import com.example.agent.EpisodeOutcome
+import com.example.agent.FailureTrace
 import com.example.agent.GameAgent
 import com.example.agent.PlayerAction
 import com.example.agent.QLearningAgent
@@ -11,16 +14,17 @@ import com.example.agent.RewardFunction
 import com.example.agent.Transition
 import com.example.data.AppDatabase
 import com.example.data.CheckpointEntity
+import com.example.data.EpisodeLogEntity
+import com.example.data.FailureMemoryEntity
 import com.example.input.ActionStep
 import com.example.input.InputController
 import com.example.input.InputStatus
 import com.example.service.LevelDevilAccessibilityService
 import com.example.service.ScreenCaptureService
-import com.example.vision.DetectionResult
 import com.example.vision.GameObservation
 import com.example.vision.HeuristicColorEdgeDetector
 import com.example.vision.LevelDevilVisionDetector
-import com.example.vision.MovementDirection
+import com.example.vision.ObjectType
 import com.example.vision.SyntheticLevelDevilFrameGenerator
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -59,9 +63,20 @@ data class DashboardState(
     val inputLatencyMs: Long = 0L,
     val totalLatencyMs: Long = 0L,
     val agentMetrics: AgentMetrics = AgentMetrics(),
+    val realMetrics: AgentMetrics = AgentMetrics(),
+    val simMetrics: AgentMetrics = AgentMetrics(),
+    val lastRewardValue: Float = 0f,
+    val lastRewardReason: String = "Awaiting transition",
+    val lastOutcome: EpisodeOutcome = EpisodeOutcome.IN_PROGRESS,
+    val recentFailures: List<FailureTrace> = emptyList(),
     val isCapturing: Boolean = false,
     val isAccessibilityConnected: Boolean = false,
     val isTrainingActive: Boolean = false,
+    val isInferenceOnly: Boolean = false,
+    val learningRate: Float = 0.15f,
+    val discountFactor: Float = 0.95f,
+    val minEpsilon: Float = 0.05f,
+    val epsilonDecay: Float = 0.995f,
     val sourceMode: PipelineSourceMode = PipelineSourceMode.SYNTHETIC_SIMULATION,
     val inputStatus: InputStatus = InputStatus.DISCONNECTED_DISABLED,
     val automationState: AutomationState = AutomationState.STOPPED,
@@ -82,6 +97,7 @@ data class DashboardState(
     val jumpBtnY: Float = 0.85f,
     val playerSeedX: Float = 0.50f,
     val playerSeedY: Float = 0.55f,
+    val currentLevel: Int = 1,
     val statusMessage: String = "Ready"
 )
 
@@ -109,7 +125,11 @@ class FramePipeline(
             playerSeedY = inputController.calibration.playerSeedY,
             tapDurationMs = inputController.tapDurationMs,
             holdDurationMs = inputController.holdDurationMs,
-            sequenceDelayMs = inputController.sequenceDelayMs
+            sequenceDelayMs = inputController.sequenceDelayMs,
+            learningRate = gameAgent.learningRate,
+            discountFactor = gameAgent.discountFactor,
+            minEpsilon = gameAgent.minEpsilon,
+            epsilonDecay = gameAgent.epsilonDecay
         )
     )
     val state: StateFlow<DashboardState> = _state.asStateFlow()
@@ -131,6 +151,8 @@ class FramePipeline(
     private var previousObservation: GameObservation? = null
     private var previousState: RLState? = null
     private var previousAction: PlayerAction? = null
+    private var lastActionDispatchedStatus: Boolean = true
+    private var recentActionHistory = ArrayDeque<PlayerAction>(5)
 
     // FPS calculation
     private var frameCount = 0
@@ -144,8 +166,18 @@ class FramePipeline(
     // Synthetic simulation state
     private var simPlayerX = 0.20f
     private var simPlayerY = 0.65f
-    private var simEpisodes = 0
     private var simLevel = 1
+
+    // Simulation isolated metrics
+    private var simSteps = 0L
+    private var simEpisodes = 0
+    private var simWins = 0
+    private var simDeaths = 0
+    private var simUnknowns = 0
+    private var simCumulativeReward = 0f
+    private var simDispatched = 0L
+    private var simRejected = 0L
+    private val simRecentRewards = ArrayDeque<Float>(30)
 
     init {
         // Collect Accessibility Service connection state
@@ -184,9 +216,6 @@ class FramePipeline(
 
     // --- Automation Lifecycle Controls ---
 
-    /**
-     * Starts the real automation loop. Never starts automatically on launch.
-     */
     fun startAutomation() {
         inputController.checkStatus()
 
@@ -206,7 +235,6 @@ class FramePipeline(
             return
         }
 
-        // Reset vision tracker with seed
         visionDetector.resetTracker()
 
         _state.value = _state.value.copy(
@@ -215,9 +243,6 @@ class FramePipeline(
         )
     }
 
-    /**
-     * Safely cancels pending actions and stops automation immediately.
-     */
     fun stopAutomation(customMessage: String? = null) {
         inputController.cancelPendingActions()
         _state.value = _state.value.copy(
@@ -227,9 +252,6 @@ class FramePipeline(
         )
     }
 
-    /**
-     * Pauses automation dispatch while keeping frame capture running.
-     */
     fun pauseAutomation() {
         inputController.cancelPendingActions()
         _state.value = _state.value.copy(
@@ -238,9 +260,6 @@ class FramePipeline(
         )
     }
 
-    /**
-     * Resumes automation if requirements are met.
-     */
     fun resumeAutomation() {
         startAutomation()
     }
@@ -262,6 +281,28 @@ class FramePipeline(
         _state.value = _state.value.copy(
             isTrainingActive = next,
             statusMessage = if (next) "RL Training Loop ACTIVE" else "Training PAUSED (Inference Only)"
+        )
+    }
+
+    fun toggleInferenceOnly() {
+        val next = !_state.value.isInferenceOnly
+        gameAgent.isInferenceOnly = next
+        _state.value = _state.value.copy(
+            isInferenceOnly = next,
+            statusMessage = if (next) "Inference-Only Mode: Q-updates & Epsilon decay FROZEN" else "Learning Mode: Q-updates ENABLED"
+        )
+    }
+
+    fun updateHyperparameters(lr: Float, gamma: Float, minEps: Float, decay: Float) {
+        gameAgent.learningRate = lr.coerceIn(0.01f, 1.0f)
+        gameAgent.discountFactor = gamma.coerceIn(0.1f, 0.99f)
+        gameAgent.minEpsilon = minEps.coerceIn(0.01f, 0.5f)
+        gameAgent.epsilonDecay = decay.coerceIn(0.90f, 0.9999f)
+        _state.value = _state.value.copy(
+            learningRate = gameAgent.learningRate,
+            discountFactor = gameAgent.discountFactor,
+            minEpsilon = gameAgent.minEpsilon,
+            epsilonDecay = gameAgent.epsilonDecay
         )
     }
 
@@ -289,9 +330,6 @@ class FramePipeline(
         )
     }
 
-    /**
-     * Entry point for frames coming from ScreenCaptureService.
-     */
     fun onNewCapturedFrame(frame: Bitmap, captureLatencyMs: Long) {
         if (_state.value.sourceMode != PipelineSourceMode.LIVE_SCREEN) return
         processFramePipeline(frame, captureLatencyMs)
@@ -303,14 +341,13 @@ class FramePipeline(
      */
     fun processFramePipeline(frame: Bitmap, captureLatencyMs: Long) {
         if (!isProcessingFrame.compareAndSet(false, true)) {
-            // Drop frame if previous is still processing to prevent queue latency buildup
             return
         }
 
         try {
             val totalStartNs = System.nanoTime()
 
-            // 1. Vision Module: Continuous seed-guided detection
+            // 1. Vision Module
             val detectionResult = visionDetector.processFrame(
                 currentFrame = frame,
                 previousFrame = previousFrame,
@@ -319,7 +356,7 @@ class FramePipeline(
             )
             val currObs = detectionResult.observation
 
-            // Tracking and Telemetry descriptors
+            // Telemetry strings
             val visionStatusText: String
             val playerPosText: String
             val velocityText: String
@@ -335,19 +372,19 @@ class FramePipeline(
                     "${it.label} ($distPercent% ahead)"
                 } ?: "Path Clear"
             } else {
-                visionStatusText = "Player Lost / Obstructed. Dispatch Paused."
+                visionStatusText = "Player Lost / Occluded. Dispatch Paused."
                 playerPosText = "Searching..."
                 velocityText = "Stationary"
                 nextObstacleText = "None"
             }
 
-            // 2. Game Agent Observation & Action Selection
+            // 2. Decision Making
             val agentStartNs = System.nanoTime()
             val currState = RLState.fromObservation(currObs)
             val isTraining = _state.value.isTrainingActive
             val isAutomationRunning = _state.value.automationState == AutomationState.RUNNING
+            val isSim = _state.value.sourceMode == PipelineSourceMode.SYNTHETIC_SIMULATION
 
-            // Only decide new action if player is detected
             val selectedAction = if (currObs.playerDetected) {
                 gameAgent.selectAction(currObs, explore = isTraining)
             } else {
@@ -357,9 +394,10 @@ class FramePipeline(
             val qValues = gameAgent.getQValues(currState)
             val agentLatencyMs = (System.nanoTime() - agentStartNs) / 1_000_000
 
-            // 3. Real Touch Input Dispatch
+            // 3. Real Touch Dispatch
             var inputLatencyMs = 0L
             var dispatchResultMsg = _state.value.lastActionResult
+            var currentDispatchSuccess = true
 
             if (isAutomationRunning && _state.value.isAccessibilityConnected) {
                 if (currObs.playerDetected) {
@@ -369,6 +407,7 @@ class FramePipeline(
                         frame.height
                     ) { success, latency ->
                         inputLatencyMs = latency
+                        currentDispatchSuccess = success
                         dispatchResultMsg = if (success) {
                             "Executed ${selectedAction.displayName} in ${latency}ms"
                         } else {
@@ -376,28 +415,115 @@ class FramePipeline(
                         }
                     }
                 } else {
-                    // Player lost: release held touches and pause dispatch
                     inputController.dispatchAction(PlayerAction.RELEASE, frame.width, frame.height)
+                    currentDispatchSuccess = true
                     dispatchResultMsg = "Player detection lost: Touch dispatch paused."
                 }
+            } else if (isSim) {
+                currentDispatchSuccess = true
+                dispatchResultMsg = "Simulated action: ${selectedAction.displayName}"
             }
 
-            // 4. Reinforcement Learning Update
+            // 4. Reinforcement Learning Update with verified dispatch status
+            var lastRewardVal = _state.value.lastRewardValue
+            var lastRewardReasonStr = _state.value.lastRewardReason
+            var lastOutcomeVal = _state.value.lastOutcome
+
             if (isTraining && previousObservation != null && previousState != null && previousAction != null) {
-                val reward = rewardFunction.calculateReward(previousObservation!!, currObs)
-                val isTerminal = currObs.isDeathScreen || currObs.isVictoryScreen
+                val rewardDetail = rewardFunction.calculateRewardDetail(
+                    prevObs = previousObservation!!,
+                    currObs = currObs,
+                    actionDispatched = lastActionDispatchedStatus,
+                    isSimulation = isSim
+                )
+                lastRewardVal = rewardDetail.reward
+                lastRewardReasonStr = rewardDetail.reason
+                lastOutcomeVal = rewardDetail.outcome
+
+                val isTerminal = (rewardDetail.outcome == EpisodeOutcome.WIN || rewardDetail.outcome == EpisodeOutcome.DEATH)
+
+                val pBox = currObs.playerBox
+                val nearestSpike = currObs.detectedObjects.firstOrNull { it.type == ObjectType.SPIKE || it.type == ObjectType.MOVING_TRAP }
+
                 val transition = Transition(
                     state = previousState!!,
                     action = previousAction!!,
-                    reward = reward,
+                    actionDispatched = lastActionDispatchedStatus,
+                    reward = rewardDetail.reward,
+                    rewardReason = rewardDetail.reason,
                     nextState = currState,
-                    isTerminal = isTerminal
+                    outcome = rewardDetail.outcome,
+                    isTerminal = isTerminal,
+                    isSimulation = isSim,
+                    playerPosition = pBox?.let { PointF(it.centerX(), it.centerY()) },
+                    hazardPosition = nearestSpike?.boundingBox?.let { PointF(it.centerX(), it.centerY()) }
                 )
+
+                // Update the agent Q-values
                 gameAgent.update(transition)
 
+                // Update simulation-isolated metrics if running in simulation
+                if (isSim) {
+                    if (lastActionDispatchedStatus) simDispatched++ else simRejected++
+                    simSteps++
+                    simCumulativeReward += rewardDetail.reward
+                    synchronized(simRecentRewards) {
+                        if (simRecentRewards.size >= 30) simRecentRewards.removeFirst()
+                        simRecentRewards.addLast(rewardDetail.reward)
+                    }
+                    if (isTerminal) {
+                        simEpisodes++
+                        when (rewardDetail.outcome) {
+                            EpisodeOutcome.WIN -> simWins++
+                            EpisodeOutcome.DEATH -> simDeaths++
+                            else -> simUnknowns++
+                        }
+                    }
+                }
+
+                // If verified death, record in Failure Memory Bank & Room DB
+                if (rewardDetail.outcome == EpisodeOutcome.DEATH && pBox != null) {
+                    val trace = FailureTrace(
+                        levelNumber = _state.value.currentLevel,
+                        deathPosition = PointF(pBox.centerX(), pBox.centerY()),
+                        nearestHazardPosition = nearestSpike?.boundingBox?.let { PointF(it.centerX(), it.centerY()) },
+                        recentActions = recentActionHistory.toList(),
+                        contributingAction = previousAction,
+                        isSimulation = isSim
+                    )
+                    gameAgent.recordFailure(trace)
+
+                    // Persist to Room DB
+                    scope.launch(Dispatchers.IO) {
+                        try {
+                            database.appDao().insertFailure(
+                                FailureMemoryEntity(
+                                    levelNumber = trace.levelNumber,
+                                    deathX = trace.deathPosition.x,
+                                    deathY = trace.deathPosition.y,
+                                    hazardX = trace.nearestHazardPosition?.x ?: -1f,
+                                    hazardY = trace.nearestHazardPosition?.y ?: -1f,
+                                    contributingAction = trace.contributingAction?.name,
+                                    isSimulation = trace.isSimulation
+                                )
+                            )
+                        } catch (e: Exception) {
+                            e.printStackTrace()
+                        }
+                    }
+                }
+
+                // Reset distance tracking on terminal
                 if (isTerminal) {
                     rewardFunction.reset()
+                    recentActionHistory.clear()
                 }
+            }
+
+            // Track recent action history
+            if (selectedAction != PlayerAction.WAIT) {
+                if (recentActionHistory.size >= 5) recentActionHistory.removeFirst()
+                recentActionHistory.addLast(selectedAction)
             }
 
             // Update FPS
@@ -415,6 +541,27 @@ class FramePipeline(
             previousObservation = currObs
             previousState = currState
             previousAction = selectedAction
+            lastActionDispatchedStatus = currentDispatchSuccess
+
+            val mainMetrics = gameAgent.getMetrics()
+            val simRollingAvg = synchronized(simRecentRewards) {
+                if (simRecentRewards.isEmpty()) 0f else simRecentRewards.sum() / simRecentRewards.size
+            }
+            val simMetricsObj = AgentMetrics(
+                totalSteps = simSteps,
+                totalEpisodes = simEpisodes,
+                wins = simWins,
+                deaths = simDeaths,
+                unknowns = simUnknowns,
+                cumulativeReward = simCumulativeReward,
+                currentEpsilon = mainMetrics.currentEpsilon,
+                winRate = if (simWins + simDeaths > 0) (simWins.toFloat() / (simWins + simDeaths)) * 100f else 0f,
+                qTableSize = mainMetrics.qTableSize,
+                actionsSelected = simDispatched + simRejected,
+                actionsDispatched = simDispatched,
+                actionsRejected = simRejected,
+                rollingAverageReward = simRollingAvg
+            )
 
             _state.value = _state.value.copy(
                 currentFrameBitmap = frame,
@@ -427,13 +574,20 @@ class FramePipeline(
                 agentLatencyMs = agentLatencyMs,
                 inputLatencyMs = inputLatencyMs,
                 totalLatencyMs = totalLatencyMs,
-                agentMetrics = gameAgent.getMetrics(),
+                agentMetrics = mainMetrics,
+                realMetrics = if (!isSim) mainMetrics else _state.value.realMetrics,
+                simMetrics = simMetricsObj,
+                lastRewardValue = lastRewardVal,
+                lastRewardReason = lastRewardReasonStr,
+                lastOutcome = lastOutcomeVal,
+                recentFailures = gameAgent.getRecentFailures(),
                 inputStatus = inputController.status.value,
                 visionStatus = visionStatusText,
                 lastDetectedPlayerPos = playerPosText,
                 playerVelocityDesc = velocityText,
                 nextObstacleDesc = nextObstacleText,
-                lastActionResult = dispatchResultMsg
+                lastActionResult = dispatchResultMsg,
+                currentLevel = if (isSim) simLevel else 1
             )
         } catch (e: Exception) {
             e.printStackTrace()
@@ -449,14 +603,12 @@ class FramePipeline(
             while (isActive && _state.value.sourceMode == PipelineSourceMode.SYNTHETIC_SIMULATION) {
                 val startNs = System.nanoTime()
 
-                // Simulate realistic game physics according to agent's action
                 when (_state.value.currentAction) {
                     PlayerAction.MOVE_RIGHT, PlayerAction.RIGHT_JUMP -> simPlayerX = (simPlayerX + 0.035f).coerceAtMost(0.92f)
                     PlayerAction.MOVE_LEFT, PlayerAction.LEFT_JUMP -> simPlayerX = (simPlayerX - 0.035f).coerceAtLeast(0.06f)
                     else -> {}
                 }
 
-                // Check pit hazard (0.40 to 0.44 and 0.56 to 0.60 if not jumping)
                 val inPit = (simPlayerX in 0.40f..0.43f || simPlayerX in 0.57f..0.60f)
                 val reachedDoor = simPlayerX >= 0.85f
 
@@ -476,12 +628,11 @@ class FramePipeline(
 
                 if (isDeath || isWin) {
                     delay(250)
-                    simEpisodes++
                     if (isWin) simLevel++
                     simPlayerX = 0.15f
                 }
 
-                delay(50) // ~20 FPS in simulation mode
+                delay(50)
             }
         }
     }
@@ -538,6 +689,7 @@ class FramePipeline(
             if (success) {
                 _state.value = _state.value.copy(
                     agentMetrics = gameAgent.getMetrics(),
+                    recentFailures = gameAgent.getRecentFailures(),
                     statusMessage = "Loaded checkpoint: ${latest.name}"
                 )
             }
@@ -551,9 +703,27 @@ class FramePipeline(
     fun resetPolicy() {
         gameAgent.resetPolicy()
         rewardFunction.reset()
+        recentActionHistory.clear()
+        simSteps = 0L
+        simEpisodes = 0
+        simWins = 0
+        simDeaths = 0
+        simUnknowns = 0
+        simCumulativeReward = 0f
+        simDispatched = 0L
+        simRejected = 0L
+        synchronized(simRecentRewards) {
+            simRecentRewards.clear()
+        }
         _state.value = _state.value.copy(
             agentMetrics = gameAgent.getMetrics(),
-            statusMessage = "Policy Q-values and training counters reset"
+            realMetrics = AgentMetrics(),
+            simMetrics = AgentMetrics(),
+            recentFailures = emptyList(),
+            lastRewardValue = 0f,
+            lastRewardReason = "Policy reset",
+            lastOutcome = EpisodeOutcome.IN_PROGRESS,
+            statusMessage = "Policy Q-values, failure memory, and episode counters reset"
         )
     }
 }

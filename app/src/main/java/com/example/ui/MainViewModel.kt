@@ -51,6 +51,20 @@ class MainViewModel : ViewModel() {
         pipeline.toggleTraining()
     }
 
+    fun toggleInferenceOnly() {
+        pipeline.toggleInferenceOnly()
+        _userFeedback.value = if (pipeline.gameAgent.isInferenceOnly) {
+            "Inference-Only mode enabled: Policy updates frozen."
+        } else {
+            "Learning mode enabled: Policy updates active."
+        }
+    }
+
+    fun updateHyperparameters(lr: Float, gamma: Float, minEps: Float, decay: Float) {
+        pipeline.updateHyperparameters(lr, gamma, minEps, decay)
+        _userFeedback.value = "Updated RL parameters: α=$lr, γ=$gamma, ε_min=$minEps, decay=$decay"
+    }
+
     fun setSourceMode(mode: PipelineSourceMode) {
         pipeline.setSourceMode(mode)
     }

@@ -1,5 +1,6 @@
 package com.example.agent
 
+import android.graphics.PointF
 import com.example.vision.GameObservation
 import kotlin.math.hypot
 
@@ -11,6 +12,13 @@ enum class PlayerAction(val displayName: String, val shortSymbol: String) {
     LEFT_JUMP("Left + Jump", "↖"),
     RIGHT_JUMP("Right + Jump", "↗"),
     RELEASE("Release All", "○")
+}
+
+enum class EpisodeOutcome(val label: String) {
+    IN_PROGRESS("In Progress"),
+    WIN("Level Complete (Exit Reached)"),
+    DEATH("Verified Death (Collision/Fall)"),
+    UNKNOWN("Uncertain / Observation Lost")
 }
 
 data class RLState(
@@ -57,12 +65,40 @@ data class RLState(
     }
 }
 
+/**
+ * Detailed transition record for evidence-based Reinforcement Learning.
+ */
 data class Transition(
     val state: RLState,
     val action: PlayerAction,
+    val actionDispatched: Boolean, // True only if Android OS / accessibility dispatched the gesture
     val reward: Float,
+    val rewardReason: String,
     val nextState: RLState,
-    val isTerminal: Boolean
+    val outcome: EpisodeOutcome,
+    val isTerminal: Boolean,
+    val isSimulation: Boolean = false,
+    val playerPosition: PointF? = null,
+    val hazardPosition: PointF? = null
+)
+
+/**
+ * Failure event trace recorded upon verified player death.
+ */
+data class FailureTrace(
+    val timestamp: Long = System.currentTimeMillis(),
+    val levelNumber: Int,
+    val deathPosition: PointF,
+    val nearestHazardPosition: PointF?,
+    val recentActions: List<PlayerAction>,
+    val contributingAction: PlayerAction?,
+    val isSimulation: Boolean
+)
+
+data class RewardDetail(
+    val reward: Float,
+    val reason: String,
+    val outcome: EpisodeOutcome
 )
 
 data class AgentMetrics(
@@ -70,16 +106,29 @@ data class AgentMetrics(
     val totalEpisodes: Int = 0,
     val wins: Int = 0,
     val deaths: Int = 0,
+    val unknowns: Int = 0,
     val cumulativeReward: Float = 0f,
     val currentEpsilon: Float = 1.0f,
     val winRate: Float = 0f,
-    val qTableSize: Int = 0
+    val qTableSize: Int = 0,
+    val actionsSelected: Long = 0L,
+    val actionsDispatched: Long = 0L,
+    val actionsRejected: Long = 0L,
+    val rollingAverageReward: Float = 0f
 )
 
 interface GameAgent {
     val name: String
+    var learningRate: Float
+    var discountFactor: Float
+    var minEpsilon: Float
+    var epsilonDecay: Float
+    var isInferenceOnly: Boolean
+
     fun selectAction(observation: GameObservation, explore: Boolean = true): PlayerAction
     fun update(transition: Transition): Float
+    fun recordFailure(trace: FailureTrace)
+    fun getRecentFailures(): List<FailureTrace>
     fun getQValues(state: RLState): Map<PlayerAction, Float>
     fun saveCheckpoint(): String
     fun loadCheckpoint(serialized: String): Boolean
@@ -88,6 +137,10 @@ interface GameAgent {
     fun setEpsilon(value: Float)
 }
 
+/**
+ * Evidence-based Reward Function using verified vision observations.
+ * Distinguishes verified wins, verified deaths, distance progress, and uncertain outcomes.
+ */
 class RewardFunction {
     private var lastDistanceToDoor: Float? = null
 
@@ -95,18 +148,52 @@ class RewardFunction {
         lastDistanceToDoor = null
     }
 
-    fun calculateReward(prevObs: GameObservation, currObs: GameObservation): Float {
-        var reward = -0.05f // Small living cost / step penalty
+    fun calculateRewardDetail(
+        prevObs: GameObservation,
+        currObs: GameObservation,
+        actionDispatched: Boolean,
+        isSimulation: Boolean
+    ): RewardDetail {
+        // If Android OS canceled or rejected the gesture, do not award/penalize game outcome
+        if (!actionDispatched) {
+            return RewardDetail(
+                reward = -0.01f,
+                reason = "Gesture dispatch canceled/rejected by OS",
+                outcome = EpisodeOutcome.IN_PROGRESS
+            )
+        }
 
+        // 1. Verified Death
         if (currObs.isDeathScreen) {
-            return -50.0f
+            return RewardDetail(
+                reward = if (isSimulation) -35.0f else -50.0f,
+                reason = "Verified Death (Hazard / Trap Collision)",
+                outcome = EpisodeOutcome.DEATH
+            )
         }
 
+        // 2. Verified Victory
         if (currObs.isVictoryScreen) {
-            return 100.0f
+            return RewardDetail(
+                reward = if (isSimulation) 80.0f else 100.0f,
+                reason = "Level Completed (Reached Exit Door)",
+                outcome = EpisodeOutcome.WIN
+            )
         }
 
-        // Distance progress reward
+        // 3. Uncertain / Observation Lost
+        if (!currObs.playerDetected && !currObs.isDeathScreen && !currObs.isVictoryScreen) {
+            return RewardDetail(
+                reward = -0.05f,
+                reason = "Player Observation Lost / Occluded",
+                outcome = EpisodeOutcome.UNKNOWN
+            )
+        }
+
+        // 4. In-progress distance progress
+        var reward = -0.05f // Step living penalty to incentivize efficiency
+        var reason = "Step Tick"
+
         val pBox = currObs.playerBox
         val dBox = currObs.doorBox
         if (pBox != null && dBox != null) {
@@ -114,16 +201,32 @@ class RewardFunction {
             val lastDist = lastDistanceToDoor
             if (lastDist != null) {
                 val delta = lastDist - currDist
-                reward += (delta * 25.0f) // Positive if moving closer to door
+                if (delta > 0.005f) {
+                    val progressReward = (delta * 30.0f)
+                    reward += progressReward
+                    reason = "Progress Toward Exit (+${String.format("%.2f", progressReward)})"
+                } else if (delta < -0.01f) {
+                    reward -= 0.1f
+                    reason = "Retreating Away from Exit"
+                }
             }
             lastDistanceToDoor = currDist
         }
 
-        // Moving trap avoidance incentive
-        if (prevObs.movingTrapNearby && !currObs.isDeathScreen) {
-            reward += 1.0f
+        // Dynamic hazard avoidance bonus
+        if (prevObs.movingTrapNearby && !currObs.movingTrapNearby && !currObs.isDeathScreen) {
+            reward += 1.5f
+            reason = "Evaded Dynamic Moving Hazard"
         }
 
-        return reward
+        return RewardDetail(
+            reward = reward,
+            reason = reason,
+            outcome = EpisodeOutcome.IN_PROGRESS
+        )
+    }
+
+    fun calculateReward(prevObs: GameObservation, currObs: GameObservation): Float {
+        return calculateRewardDetail(prevObs, currObs, actionDispatched = true, isSimulation = false).reward
     }
 }

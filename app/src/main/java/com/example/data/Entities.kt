@@ -27,3 +27,30 @@ data class TrainingSessionEntity(
     val winRate: Float,
     val avgLatencyMs: Float
 )
+
+@Entity(tableName = "failure_memories")
+data class FailureMemoryEntity(
+    @PrimaryKey(autoGenerate = true)
+    val id: Long = 0,
+    val timestamp: Long = System.currentTimeMillis(),
+    val levelNumber: Int,
+    val deathX: Float,
+    val deathY: Float,
+    val hazardX: Float,
+    val hazardY: Float,
+    val contributingAction: String?,
+    val isSimulation: Boolean
+)
+
+@Entity(tableName = "episode_logs")
+data class EpisodeLogEntity(
+    @PrimaryKey(autoGenerate = true)
+    val id: Long = 0,
+    val timestamp: Long = System.currentTimeMillis(),
+    val outcome: String,
+    val levelNumber: Int,
+    val totalSteps: Int,
+    val cumulativeReward: Float,
+    val isSimulation: Boolean,
+    val durationMs: Long
+)

@@ -512,6 +512,43 @@ fun LiveDashboardScreen(
                         }
                     }
                 }
+
+                Spacer(modifier = Modifier.height(8.dp))
+
+                // Real-time Evidence-based Reward & Outcome row
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(DarkSurfaceElevated)
+                        .padding(8.dp),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Text(
+                            text = "RL REWARD: ${String.format("%+.2f", state.lastRewardValue)}",
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = if (state.lastRewardValue >= 0) CyberGreen else CyberRed
+                        )
+                        Text(
+                            text = state.lastRewardReason,
+                            fontSize = 10.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    StatusBadge(
+                        label = state.lastOutcome.label.uppercase(),
+                        isActive = state.lastOutcome == com.example.agent.EpisodeOutcome.WIN,
+                        activeColor = CyberGreen,
+                        inactiveColor = when (state.lastOutcome) {
+                            com.example.agent.EpisodeOutcome.DEATH -> CyberRed
+                            com.example.agent.EpisodeOutcome.UNKNOWN -> AmberPrimary
+                            else -> Color.Gray
+                        }
+                    )
+                }
             }
         }
 

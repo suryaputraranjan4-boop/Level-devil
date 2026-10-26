@@ -197,7 +197,11 @@ fun MainAppContent(
                     onSetEpsilon = { viewModel.setEpsilon(it) },
                     onSaveCheckpoint = { viewModel.saveCheckpoint(it) },
                     onLoadCheckpoint = { viewModel.loadCheckpoint() },
-                    onResetPolicy = { viewModel.resetPolicy() }
+                    onResetPolicy = { viewModel.resetPolicy() },
+                    onToggleInferenceOnly = { viewModel.toggleInferenceOnly() },
+                    onUpdateHyperparameters = { lr, gamma, minEps, decay ->
+                        viewModel.updateHyperparameters(lr, gamma, minEps, decay)
+                    }
                 )
                 2 -> TouchInputScreen(
                     state = state,

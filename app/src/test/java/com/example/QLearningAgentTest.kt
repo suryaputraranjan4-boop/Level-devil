@@ -1,5 +1,6 @@
 package com.example
 
+import com.example.agent.EpisodeOutcome
 import com.example.agent.PlayerAction
 import com.example.agent.QLearningAgent
 import com.example.agent.RLState
@@ -26,12 +27,15 @@ class QLearningAgentTest {
         val initialQ = agent.getQValues(s0)[PlayerAction.MOVE_RIGHT] ?: 0f
         assertEquals(0f, initialQ, 0.0001f)
 
-        // Give a positive transition reward
+        // Positive transition reward
         val transition = Transition(
             state = s0,
             action = PlayerAction.MOVE_RIGHT,
+            actionDispatched = true,
             reward = 10f,
+            rewardReason = "Step Forward",
             nextState = s1,
+            outcome = EpisodeOutcome.IN_PROGRESS,
             isTerminal = false
         )
 
@@ -50,8 +54,11 @@ class QLearningAgentTest {
             Transition(
                 state = s0,
                 action = PlayerAction.JUMP,
+                actionDispatched = true,
                 reward = 25f,
+                rewardReason = "Target reached",
                 nextState = s0,
+                outcome = EpisodeOutcome.WIN,
                 isTerminal = true
             )
         )
