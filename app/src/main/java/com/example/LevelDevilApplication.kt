@@ -27,7 +27,10 @@ class LevelDevilApplication : Application() {
             applicationContext,
             AppDatabase::class.java,
             "level_devil_ai.db"
-        ).fallbackToDestructiveMigration().build()
+        )
+            .addMigrations(AppDatabase.MIGRATION_1_2)
+            .fallbackToDestructiveMigration()
+            .build()
 
         framePipeline = FramePipeline(this, database)
     }

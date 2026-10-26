@@ -6,6 +6,8 @@ import androidx.room.Insert
 import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import androidx.room.RoomDatabase
+import androidx.room.migration.Migration
+import androidx.sqlite.db.SupportSQLiteDatabase
 import kotlinx.coroutines.flow.Flow
 
 @Dao
@@ -56,4 +58,40 @@ interface AppDao {
 )
 abstract class AppDatabase : RoomDatabase() {
     abstract fun appDao(): AppDao
+
+    companion object {
+        val MIGRATION_1_2 = object : Migration(1, 2) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `failure_memories` (
+                        `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        `timestamp` INTEGER NOT NULL,
+                        `levelNumber` INTEGER NOT NULL,
+                        `deathX` REAL NOT NULL,
+                        `deathY` REAL NOT NULL,
+                        `hazardX` REAL NOT NULL,
+                        `hazardY` REAL NOT NULL,
+                        `contributingAction` TEXT,
+                        `isSimulation` INTEGER NOT NULL
+                    )
+                    """.trimIndent()
+                )
+                db.execSQL(
+                    """
+                    CREATE TABLE IF NOT EXISTS `episode_logs` (
+                        `id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL,
+                        `timestamp` INTEGER NOT NULL,
+                        `outcome` TEXT NOT NULL,
+                        `levelNumber` INTEGER NOT NULL,
+                        `totalSteps` INTEGER NOT NULL,
+                        `cumulativeReward` REAL NOT NULL,
+                        `isSimulation` INTEGER NOT NULL,
+                        `durationMs` INTEGER NOT NULL
+                    )
+                    """.trimIndent()
+                )
+            }
+        }
+    }
 }
