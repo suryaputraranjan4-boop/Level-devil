@@ -439,6 +439,7 @@ class FramePipeline(
                         } else {
                             "Android canceled/rejected ${selectedAction.displayName} dispatch"
                         }
+                        dispatchResultMsg = resultMessage
                         _state.value = _state.value.copy(
                             inputLatencyMs = latency,
                             lastActionResult = resultMessage,
