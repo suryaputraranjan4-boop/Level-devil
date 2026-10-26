@@ -387,7 +387,7 @@ fun RLTrainingScreen(
                                 ) {
                                     Column {
                                         Text(
-                                            text = "Level ${failure.levelNumber} Death at (${(failure.deathPosition.x * 100).toInt()}%, ${(failure.deathPosition.y * 100).toInt()}%)",
+                                            text = "${if (failure.levelNumber > 0) "Level ${failure.levelNumber}" else "Level unknown"} Death at (${(failure.deathPosition.x * 100).toInt()}%, ${(failure.deathPosition.y * 100).toInt()}%)",
                                             fontSize = 11.sp,
                                             fontWeight = FontWeight.Bold,
                                             color = MaterialTheme.colorScheme.onSurface
