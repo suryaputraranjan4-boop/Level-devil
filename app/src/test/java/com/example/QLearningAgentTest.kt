@@ -146,6 +146,33 @@ class QLearningAgentTest {
     }
 
     @Test
+    fun `real exit overlap is not counted as verified win but simulation can record simulated win`() {
+        val rewardFn = RewardFunction()
+        val exitOverlap = GameObservation(
+            playerDetected = true,
+            playerBox = android.graphics.RectF(0.82f, 0.55f, 0.90f, 0.68f),
+            doorBox = android.graphics.RectF(0.82f, 0.54f, 0.93f, 0.75f),
+            isVictoryScreen = true
+        )
+
+        val realResult = rewardFn.calculateRewardDetail(
+            prevObs = exitOverlap,
+            currObs = exitOverlap,
+            actionDispatched = true,
+            isSimulation = false
+        )
+        assertEquals("Door overlap alone is not proof of real game completion", EpisodeOutcome.UNKNOWN, realResult.outcome)
+
+        val simulatedResult = rewardFn.calculateRewardDetail(
+            prevObs = exitOverlap,
+            currObs = exitOverlap,
+            actionDispatched = true,
+            isSimulation = true
+        )
+        assertEquals("Synthetic geometry may report a simulation-only win", EpisodeOutcome.WIN, simulatedResult.outcome)
+    }
+
+    @Test
     fun `test reward function rewards forward movement toward door`() {
         val rewardFn = RewardFunction()
 
