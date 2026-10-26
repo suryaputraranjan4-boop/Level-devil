@@ -108,7 +108,9 @@ class FramePipeline(
     private val scope = CoroutineScope(Dispatchers.Default)
 
     val visionDetector: LevelDevilVisionDetector = HeuristicColorEdgeDetector()
+    // Keep synthetic training isolated so its policy and outcomes cannot contaminate real-game metrics.
     val gameAgent: GameAgent = QLearningAgent()
+    private val simulationAgent: GameAgent = QLearningAgent()
     val rewardFunction = RewardFunction()
     val inputController = InputController(context)
     val syntheticGenerator = SyntheticLevelDevilFrameGenerator()
@@ -175,8 +177,6 @@ class FramePipeline(
     private var simDeaths = 0
     private var simUnknowns = 0
     private var simCumulativeReward = 0f
-    private var simDispatched = 0L
-    private var simRejected = 0L
     private val simRecentRewards = ArrayDeque<Float>(30)
 
     init {
@@ -287,6 +287,7 @@ class FramePipeline(
     fun toggleInferenceOnly() {
         val next = !_state.value.isInferenceOnly
         gameAgent.isInferenceOnly = next
+        simulationAgent.isInferenceOnly = next
         _state.value = _state.value.copy(
             isInferenceOnly = next,
             statusMessage = if (next) "Inference-Only Mode: Q-updates & Epsilon decay FROZEN" else "Learning Mode: Q-updates ENABLED"
@@ -294,10 +295,16 @@ class FramePipeline(
     }
 
     fun updateHyperparameters(lr: Float, gamma: Float, minEps: Float, decay: Float) {
-        gameAgent.learningRate = lr.coerceIn(0.01f, 1.0f)
-        gameAgent.discountFactor = gamma.coerceIn(0.1f, 0.99f)
-        gameAgent.minEpsilon = minEps.coerceIn(0.01f, 0.5f)
-        gameAgent.epsilonDecay = decay.coerceIn(0.90f, 0.9999f)
+        val boundedLr = lr.coerceIn(0.01f, 1.0f)
+        val boundedGamma = gamma.coerceIn(0.1f, 0.99f)
+        val boundedMinEpsilon = minEps.coerceIn(0.01f, 0.5f)
+        val boundedDecay = decay.coerceIn(0.90f, 0.9999f)
+        listOf(gameAgent, simulationAgent).forEach { agent ->
+            agent.learningRate = boundedLr
+            agent.discountFactor = boundedGamma
+            agent.minEpsilon = boundedMinEpsilon
+            agent.epsilonDecay = boundedDecay
+        }
         _state.value = _state.value.copy(
             learningRate = gameAgent.learningRate,
             discountFactor = gameAgent.discountFactor,
@@ -384,14 +391,15 @@ class FramePipeline(
             val isTraining = _state.value.isTrainingActive
             val isAutomationRunning = _state.value.automationState == AutomationState.RUNNING
             val isSim = _state.value.sourceMode == PipelineSourceMode.SYNTHETIC_SIMULATION
+            val activeAgent = if (isSim) simulationAgent else gameAgent
 
             val selectedAction = if (currObs.playerDetected) {
-                gameAgent.selectAction(currObs, explore = isTraining)
+                activeAgent.selectAction(currObs, explore = isTraining)
             } else {
                 PlayerAction.WAIT
             }
 
-            val qValues = gameAgent.getQValues(currState)
+            val qValues = activeAgent.getQValues(currState)
             val agentLatencyMs = (System.nanoTime() - agentStartNs) / 1_000_000
 
             // 3. Real Touch Dispatch
@@ -460,11 +468,10 @@ class FramePipeline(
                 )
 
                 // Update the agent Q-values
-                gameAgent.update(transition)
+                activeAgent.update(transition)
 
                 // Update simulation-isolated metrics if running in simulation
                 if (isSim) {
-                    if (lastActionDispatchedStatus) simDispatched++ else simRejected++
                     simSteps++
                     simCumulativeReward += rewardDetail.reward
                     synchronized(simRecentRewards) {
@@ -491,7 +498,7 @@ class FramePipeline(
                         contributingAction = previousAction,
                         isSimulation = isSim
                     )
-                    gameAgent.recordFailure(trace)
+                    activeAgent.recordFailure(trace)
 
                     // Persist to Room DB
                     scope.launch(Dispatchers.IO) {
@@ -543,7 +550,7 @@ class FramePipeline(
             previousAction = selectedAction
             lastActionDispatchedStatus = currentDispatchSuccess
 
-            val mainMetrics = gameAgent.getMetrics()
+            val mainMetrics = activeAgent.getMetrics()
             val simRollingAvg = synchronized(simRecentRewards) {
                 if (simRecentRewards.isEmpty()) 0f else simRecentRewards.sum() / simRecentRewards.size
             }
@@ -557,9 +564,9 @@ class FramePipeline(
                 currentEpsilon = mainMetrics.currentEpsilon,
                 winRate = if (simWins + simDeaths > 0) (simWins.toFloat() / (simWins + simDeaths)) * 100f else 0f,
                 qTableSize = mainMetrics.qTableSize,
-                actionsSelected = simDispatched + simRejected,
-                actionsDispatched = simDispatched,
-                actionsRejected = simRejected,
+                actionsSelected = simSteps,
+                actionsDispatched = 0L,
+                actionsRejected = 0L,
                 rollingAverageReward = simRollingAvg
             )
 
@@ -580,7 +587,7 @@ class FramePipeline(
                 lastRewardValue = lastRewardVal,
                 lastRewardReason = lastRewardReasonStr,
                 lastOutcome = lastOutcomeVal,
-                recentFailures = gameAgent.getRecentFailures(),
+                recentFailures = activeAgent.getRecentFailures(),
                 inputStatus = inputController.status.value,
                 visionStatus = visionStatusText,
                 lastDetectedPlayerPos = playerPosText,
@@ -664,8 +671,9 @@ class FramePipeline(
 
     suspend fun saveCheckpoint(name: String): Boolean = withContext(Dispatchers.IO) {
         try {
-            val serialized = gameAgent.saveCheckpoint()
-            val metrics = gameAgent.getMetrics()
+            val checkpointAgent = if (_state.value.sourceMode == PipelineSourceMode.SYNTHETIC_SIMULATION) simulationAgent else gameAgent
+            val serialized = checkpointAgent.saveCheckpoint()
+            val metrics = checkpointAgent.getMetrics()
             val entity = CheckpointEntity(
                 name = name,
                 episodeCount = metrics.totalEpisodes,
@@ -685,11 +693,12 @@ class FramePipeline(
     suspend fun loadLatestCheckpoint(): Boolean = withContext(Dispatchers.IO) {
         try {
             val latest = database.appDao().getLatestCheckpoint() ?: return@withContext false
-            val success = gameAgent.loadCheckpoint(latest.serializedQTable)
+            val checkpointAgent = if (_state.value.sourceMode == PipelineSourceMode.SYNTHETIC_SIMULATION) simulationAgent else gameAgent
+            val success = checkpointAgent.loadCheckpoint(latest.serializedQTable)
             if (success) {
                 _state.value = _state.value.copy(
-                    agentMetrics = gameAgent.getMetrics(),
-                    recentFailures = gameAgent.getRecentFailures(),
+                    agentMetrics = checkpointAgent.getMetrics(),
+                    recentFailures = checkpointAgent.getRecentFailures(),
                     statusMessage = "Loaded checkpoint: ${latest.name}"
                 )
             }
@@ -702,6 +711,7 @@ class FramePipeline(
 
     fun resetPolicy() {
         gameAgent.resetPolicy()
+        simulationAgent.resetPolicy()
         rewardFunction.reset()
         recentActionHistory.clear()
         simSteps = 0L
@@ -710,8 +720,6 @@ class FramePipeline(
         simDeaths = 0
         simUnknowns = 0
         simCumulativeReward = 0f
-        simDispatched = 0L
-        simRejected = 0L
         synchronized(simRecentRewards) {
             simRecentRewards.clear()
         }
