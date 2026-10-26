@@ -280,6 +280,9 @@ class FramePipeline(
             stopAutomation("Source mode changed. Automation stopped.")
         }
         pendingLiveAction = null
+        previousObservation = null
+        previousState = null
+        previousAction = null
         recentActionHistory.clear()
         rewardFunction.reset()
         simulationRewardFunction.reset()
