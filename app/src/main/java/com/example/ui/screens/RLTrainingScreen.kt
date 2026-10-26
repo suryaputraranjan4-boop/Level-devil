@@ -181,7 +181,7 @@ fun RLTrainingScreen(
                 Spacer(modifier = Modifier.height(6.dp))
                 Text(
                     text = if (selectedMetricView == "REAL") {
-                        "Showing verified outcomes from physical MediaProjection screen capture. No simulation wins mixed."
+                        "Real screen metrics only. Door overlap is not a confirmed win; death counts come from a visual heuristic and need on-device validation."
                     } else {
                         "Showing synthetic benchmark loop outcomes. Synthetic data is isolated from real game metrics."
                     },
@@ -203,13 +203,13 @@ fun RLTrainingScreen(
                 modifier = Modifier.weight(1f)
             )
             TelemetryCard(
-                label = "Verified Wins",
+                label = "Confirmed Wins",
                 value = "${activeMetrics.wins}",
                 color = CyberGreen,
                 modifier = Modifier.weight(1f)
             )
             TelemetryCard(
-                label = "Verified Deaths",
+                label = "Death-Screen Detections",
                 value = "${activeMetrics.deaths}",
                 color = CyberRed,
                 modifier = Modifier.weight(1f)
@@ -221,7 +221,7 @@ fun RLTrainingScreen(
             horizontalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             TelemetryCard(
-                label = "Win Rate",
+                label = "Observed Win Rate",
                 value = String.format("%.1f", activeMetrics.winRate),
                 unit = "%",
                 color = if (activeMetrics.winRate > 40f) CyberGreen else AmberPrimary,
@@ -387,7 +387,7 @@ fun RLTrainingScreen(
                                 ) {
                                     Column {
                                         Text(
-                                            text = "Level ${failure.levelNumber} Death at (${(failure.deathPosition.x * 100).toInt()}%, ${(failure.deathPosition.y * 100).toInt()}%)",
+                                            text = "${if (failure.levelNumber > 0) "Level ${failure.levelNumber}" else "Level unknown"} Death at (${(failure.deathPosition.x * 100).toInt()}%, ${(failure.deathPosition.y * 100).toInt()}%)",
                                             fontSize = 11.sp,
                                             fontWeight = FontWeight.Bold,
                                             color = MaterialTheme.colorScheme.onSurface

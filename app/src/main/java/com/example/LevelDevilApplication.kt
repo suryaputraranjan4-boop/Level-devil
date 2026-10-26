@@ -29,7 +29,7 @@ class LevelDevilApplication : Application() {
             "level_devil_ai.db"
         )
             .addMigrations(AppDatabase.MIGRATION_1_2)
-            .fallbackToDestructiveMigration()
+            // Never silently delete learned checkpoints when a future migration is missing.
             .build()
 
         framePipeline = FramePipeline(this, database)

@@ -42,7 +42,8 @@ class SyntheticLevelDevilFrameGenerator(
         playerYPercent: Float = 0.65f,
         includeMovingTrap: Boolean = true,
         showDeathScreen: Boolean = false,
-        levelNumber: Int = 1
+        levelNumber: Int = 1,
+        movingTrapXPercent: Float? = null
     ): Bitmap {
         val bitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(bitmap)
@@ -88,10 +89,13 @@ class SyntheticLevelDevilFrameGenerator(
 
         // 5. Draw Dynamic Moving Trap if requested
         if (includeMovingTrap) {
-            trapOffsetX += trapDirection * 12f
-            if (trapOffsetX > 30f || trapOffsetX < -30f) trapDirection *= -1f
-
-            val trapX = (width * 0.50f) + trapOffsetX
+            val trapX = if (movingTrapXPercent != null) {
+                width * movingTrapXPercent.coerceIn(0.35f, 0.65f)
+            } else {
+                trapOffsetX += trapDirection * 12f
+                if (trapOffsetX > 30f || trapOffsetX < -30f) trapDirection *= -1f
+                (width * 0.50f) + trapOffsetX
+            }
             val trapY = height * 0.45f
             canvas.drawRect(trapX - 10f, trapY - 10f, trapX + 10f, trapY + 10f, platformPaint)
         }

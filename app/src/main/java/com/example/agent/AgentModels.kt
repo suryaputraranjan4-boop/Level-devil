@@ -172,13 +172,31 @@ class RewardFunction {
             )
         }
 
-        // 2. Verified Victory
+        // A real victory is counted only when a completion screen is recognized.
         if (currObs.isVictoryScreen) {
             return RewardDetail(
                 reward = if (isSimulation) 80.0f else 100.0f,
-                reason = "Level Completed (Reached Exit Door)",
+                reason = if (isSimulation) "Synthetic completion signal" else "Completion screen recognized",
                 outcome = EpisodeOutcome.WIN
             )
+        }
+
+        // The synthetic environment knows its geometry; live door overlap alone is not proof
+        // that the game registered a level completion.
+        if (currObs.isExitOverlap) {
+            return if (isSimulation) {
+                RewardDetail(
+                    reward = 80.0f,
+                    reason = "Synthetic exit reached (simulation result only)",
+                    outcome = EpisodeOutcome.WIN
+                )
+            } else {
+                RewardDetail(
+                    reward = 0.0f,
+                    reason = "Exit overlap detected; real completion is not verified",
+                    outcome = EpisodeOutcome.UNKNOWN
+                )
+            }
         }
 
         // 3. Uncertain / Observation Lost

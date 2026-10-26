@@ -18,6 +18,10 @@ interface AppDao {
     @Query("SELECT * FROM checkpoints ORDER BY timestamp DESC LIMIT 1")
     suspend fun getLatestCheckpoint(): CheckpointEntity?
 
+    // Legacy unprefixed checkpoints are treated as live-game checkpoints.
+    @Query("SELECT * FROM checkpoints WHERE (:isSimulation = 1 AND name LIKE '[SIM] %') OR (:isSimulation = 0 AND name NOT LIKE '[SIM] %') ORDER BY timestamp DESC LIMIT 1")
+    suspend fun getLatestCheckpointForMode(isSimulation: Boolean): CheckpointEntity?
+
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertCheckpoint(checkpoint: CheckpointEntity): Long
 

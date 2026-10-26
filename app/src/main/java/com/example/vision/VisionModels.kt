@@ -39,7 +39,9 @@ data class GameObservation(
     val isGrounded: Boolean = false,
     val movingTrapNearby: Boolean = false,
     val isDeathScreen: Boolean = false,
+    // True only when a real completion screen is recognized, not merely when the player overlaps the door.
     val isVictoryScreen: Boolean = false,
+    val isExitOverlap: Boolean = false,
     val detectedObjects: List<DetectedObject> = emptyList(),
     val frameWidth: Int = 0,
     val frameHeight: Int = 0,
