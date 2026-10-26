@@ -2,12 +2,19 @@ package com.example.input
 
 import android.content.Context
 import android.content.Intent
+import android.graphics.PointF
 import android.provider.Settings
 import com.example.agent.PlayerAction
 import com.example.service.LevelDevilAccessibilityService
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.launch
+import java.util.concurrent.atomic.AtomicBoolean
 
 data class TouchCalibration(
     // Normalized screen coordinates (0.0 to 1.0)
@@ -21,19 +28,36 @@ data class TouchCalibration(
     var playerSeedY: Float = 0.55f
 )
 
+data class ActionStep(
+    val action: PlayerAction,
+    val durationMs: Long = 120L,
+    val delayAfterMs: Long = 60L
+)
+
 enum class InputStatus {
     NOT_CONFIGURED,
     DISCONNECTED_DISABLED,
     READY_CONNECTED,
     TESTING_DISPATCH,
     TEST_VERIFIED,
-    TEST_FAILED
+    TEST_FAILED,
+    CANCELED
 }
 
 class InputController(
     private val context: Context
 ) {
+    private val scope = CoroutineScope(Dispatchers.Default)
+
     var calibration: TouchCalibration = TouchCalibration()
+
+    // Configurable action timings
+    var tapDurationMs: Long = 60L
+    var holdDurationMs: Long = 220L
+    var sequenceDelayMs: Long = 100L
+
+    private val isDispatchingLock = AtomicBoolean(false)
+    private var sequenceJob: Job? = null
 
     init {
         val prefs = context.getSharedPreferences("level_devil_calibration", Context.MODE_PRIVATE)
@@ -47,6 +71,9 @@ class InputController(
             playerSeedX = prefs.getFloat("player_seed_x", 0.50f),
             playerSeedY = prefs.getFloat("player_seed_y", 0.55f)
         )
+        tapDurationMs = prefs.getLong("tap_duration_ms", 60L)
+        holdDurationMs = prefs.getLong("hold_duration_ms", 220L)
+        sequenceDelayMs = prefs.getLong("sequence_delay_ms", 100L)
     }
 
     fun saveCalibration() {
@@ -56,7 +83,17 @@ class InputController(
             .putFloat("right_x", calibration.rightBtnX).putFloat("right_y", calibration.rightBtnY)
             .putFloat("jump_x", calibration.jumpBtnX).putFloat("jump_y", calibration.jumpBtnY)
             .putFloat("player_seed_x", calibration.playerSeedX).putFloat("player_seed_y", calibration.playerSeedY)
+            .putLong("tap_duration_ms", tapDurationMs)
+            .putLong("hold_duration_ms", holdDurationMs)
+            .putLong("sequence_delay_ms", sequenceDelayMs)
             .apply()
+    }
+
+    fun updateTimingSettings(tapMs: Long, holdMs: Long, seqDelayMs: Long) {
+        tapDurationMs = tapMs.coerceIn(20L, 500L)
+        holdDurationMs = holdMs.coerceIn(50L, 1000L)
+        sequenceDelayMs = seqDelayMs.coerceIn(20L, 500L)
+        saveCalibration()
     }
 
     private val _status = MutableStateFlow(InputStatus.DISCONNECTED_DISABLED)
@@ -67,6 +104,9 @@ class InputController(
 
     private val _lastDispatchLatencyMs = MutableStateFlow(0L)
     val lastDispatchLatencyMs: StateFlow<Long> = _lastDispatchLatencyMs.asStateFlow()
+
+    private val _isDispatching = MutableStateFlow(false)
+    val isDispatching: StateFlow<Boolean> = _isDispatching.asStateFlow()
 
     fun checkStatus() {
         val service = LevelDevilAccessibilityService.instance
@@ -93,12 +133,23 @@ class InputController(
     }
 
     /**
-     * Dispatches action corresponding to the RL agent choice.
+     * Converts normalized coordinates (0.0 to 1.0) into physical screen pixel values.
+     */
+    fun denormalize(normX: Float, normY: Float, screenWidth: Int, screenHeight: Int): PointF {
+        val px = (normX.coerceIn(0f, 1f) * screenWidth).coerceIn(0f, screenWidth.toFloat())
+        val py = (normY.coerceIn(0f, 1f) * screenHeight).coerceIn(0f, screenHeight.toFloat())
+        return PointF(px, py)
+    }
+
+    /**
+     * Dispatches action corresponding to the RL agent or automation choice.
+     * Prevents overlapping/duplicate gestures using an atomic concurrency lock.
      */
     fun dispatchAction(
         action: PlayerAction,
         screenWidth: Int,
         screenHeight: Int,
+        customHoldDurationMs: Long? = null,
         onDispatched: ((Boolean, Long) -> Unit)? = null
     ) {
         val service = LevelDevilAccessibilityService.instance
@@ -109,58 +160,123 @@ class InputController(
             return
         }
 
+        if (action == PlayerAction.WAIT || action == PlayerAction.RELEASE) {
+            // Release/Wait: cancel any active gesture and clear dispatch state immediately
+            service.cancelPendingGestures()
+            _isDispatching.value = false
+            _lastDispatchMessage.value = "Released all virtual buttons (Neutral)."
+            onDispatched?.invoke(true, 0L)
+            return
+        }
+
+        // Prevent duplicate overlapping stroke calls
+        if (!isDispatchingLock.compareAndSet(false, true)) {
+            _lastDispatchMessage.value = "Skipped duplicate dispatch: previous stroke still in flight."
+            onDispatched?.invoke(false, 0L)
+            return
+        }
+
+        _isDispatching.value = true
         val startNs = System.nanoTime()
 
-        val leftPx = calibration.leftBtnX * screenWidth
-        val leftPy = calibration.leftBtnY * screenHeight
-        val rightPx = calibration.rightBtnX * screenWidth
-        val rightPy = calibration.rightBtnY * screenHeight
-        val jumpPx = calibration.jumpBtnX * screenWidth
-        val jumpPy = calibration.jumpBtnY * screenHeight
+        val leftPos = denormalize(calibration.leftBtnX, calibration.leftBtnY, screenWidth, screenHeight)
+        val rightPos = denormalize(calibration.rightBtnX, calibration.rightBtnY, screenWidth, screenHeight)
+        val jumpPos = denormalize(calibration.jumpBtnX, calibration.jumpBtnY, screenWidth, screenHeight)
+
+        val duration = customHoldDurationMs ?: holdDurationMs
+
+        val callback: (Boolean) -> Unit = { success ->
+            val latencyMs = (System.nanoTime() - startNs) / 1_000_000
+            _lastDispatchLatencyMs.value = latencyMs
+            _isDispatching.value = false
+            isDispatchingLock.set(false)
+
+            if (success) {
+                _lastDispatchMessage.value = "Dispatched ${action.displayName} (${latencyMs}ms)"
+            } else {
+                _lastDispatchMessage.value = "Gesture ${action.displayName} canceled by Android OS"
+            }
+            onDispatched?.invoke(success, latencyMs)
+        }
 
         when (action) {
             PlayerAction.MOVE_LEFT -> {
-                service.dispatchTap(leftPx, leftPy, durationMs = 120L) { success ->
-                    val latencyMs = (System.nanoTime() - startNs) / 1_000_000
-                    _lastDispatchLatencyMs.value = latencyMs
-                    onDispatched?.invoke(success, latencyMs)
-                }
+                service.dispatchHold(leftPos.x, leftPos.y, durationMs = duration, onResult = callback)
             }
             PlayerAction.MOVE_RIGHT -> {
-                service.dispatchTap(rightPx, rightPy, durationMs = 120L) { success ->
-                    val latencyMs = (System.nanoTime() - startNs) / 1_000_000
-                    _lastDispatchLatencyMs.value = latencyMs
-                    onDispatched?.invoke(success, latencyMs)
-                }
+                service.dispatchHold(rightPos.x, rightPos.y, durationMs = duration, onResult = callback)
             }
             PlayerAction.JUMP -> {
-                service.dispatchTap(jumpPx, jumpPy, durationMs = 80L) { success ->
-                    val latencyMs = (System.nanoTime() - startNs) / 1_000_000
-                    _lastDispatchLatencyMs.value = latencyMs
-                    onDispatched?.invoke(success, latencyMs)
-                }
+                service.dispatchTap(jumpPos.x, jumpPos.y, durationMs = tapDurationMs, onResult = callback)
             }
             PlayerAction.LEFT_JUMP -> {
-                service.dispatchDualTap(leftPx, leftPy, 140L, jumpPx, jumpPy, 90L) { success ->
-                    val latencyMs = (System.nanoTime() - startNs) / 1_000_000
-                    _lastDispatchLatencyMs.value = latencyMs
-                    onDispatched?.invoke(success, latencyMs)
-                }
+                service.dispatchDualTap(leftPos.x, leftPos.y, duration, jumpPos.x, jumpPos.y, tapDurationMs, onResult = callback)
             }
             PlayerAction.RIGHT_JUMP -> {
-                service.dispatchDualTap(rightPx, rightPy, 140L, jumpPx, jumpPy, 90L) { success ->
-                    val latencyMs = (System.nanoTime() - startNs) / 1_000_000
-                    _lastDispatchLatencyMs.value = latencyMs
-                    onDispatched?.invoke(success, latencyMs)
-                }
+                service.dispatchDualTap(rightPos.x, rightPos.y, duration, jumpPos.x, jumpPos.y, tapDurationMs, onResult = callback)
             }
             PlayerAction.WAIT, PlayerAction.RELEASE -> {
-                // No touch sent, simply record latency
-                val latencyMs = (System.nanoTime() - startNs) / 1_000_000
-                _lastDispatchLatencyMs.value = latencyMs
-                onDispatched?.invoke(true, latencyMs)
+                callback(true)
             }
         }
+    }
+
+    /**
+     * Executes a configurable sequential chain of action steps with timed delays.
+     */
+    fun executeSequence(
+        steps: List<ActionStep>,
+        screenWidth: Int,
+        screenHeight: Int,
+        onStepDispatched: ((Int, ActionStep, Boolean) -> Unit)? = null,
+        onSequenceCompleted: ((Boolean) -> Unit)? = null
+    ) {
+        cancelPendingActions()
+
+        sequenceJob = scope.launch {
+            var allSucceeded = true
+            for ((index, step) in steps.withIndex()) {
+                val service = LevelDevilAccessibilityService.instance
+                if (service == null) {
+                    allSucceeded = false
+                    break
+                }
+
+                var stepSuccess = false
+                val completionSignal = java.util.concurrent.CountDownLatch(1)
+
+                dispatchAction(step.action, screenWidth, screenHeight, step.durationMs) { success, _ ->
+                    stepSuccess = success
+                    completionSignal.countDown()
+                }
+
+                // Wait with safety bounded timeout
+                completionSignal.await(step.durationMs + 300L, java.util.concurrent.TimeUnit.MILLISECONDS)
+                onStepDispatched?.invoke(index, step, stepSuccess)
+
+                if (!stepSuccess) {
+                    allSucceeded = false
+                }
+
+                if (step.delayAfterMs > 0) {
+                    delay(step.delayAfterMs)
+                }
+            }
+            onSequenceCompleted?.invoke(allSucceeded)
+        }
+    }
+
+    /**
+     * Safely cancels any pending automation actions or sequences immediately.
+     */
+    fun cancelPendingActions() {
+        sequenceJob?.cancel()
+        sequenceJob = null
+        LevelDevilAccessibilityService.instance?.cancelPendingGestures()
+        isDispatchingLock.set(false)
+        _isDispatching.value = false
+        _status.value = InputStatus.CANCELED
+        _lastDispatchMessage.value = "All active gestures and automation actions canceled safely."
     }
 
     /**
@@ -184,7 +300,7 @@ class InputController(
         val testY = screenHeight * 0.5f
         val startNs = System.nanoTime()
 
-        service.dispatchTap(testX, testY, durationMs = 50L) { success ->
+        service.dispatchTap(testX, testY, durationMs = tapDurationMs) { success ->
             val latencyMs = (System.nanoTime() - startNs) / 1_000_000
             _lastDispatchLatencyMs.value = latencyMs
 

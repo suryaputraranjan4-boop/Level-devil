@@ -25,11 +25,12 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Error
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material.icons.filled.Timer
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
@@ -39,6 +40,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -69,17 +71,19 @@ fun TouchInputScreen(
     onOpenAccessibilitySettings: () -> Unit,
     onRunSelfTest: (Int, Int) -> Unit,
     onUpdateCalibration: (Float, Float, Float, Float, Float, Float, Float, Float) -> Unit,
+    onUpdateTimings: (Long, Long, Long) -> Unit,
+    onExecuteTestSequence: (Int, Int) -> Unit,
+    onCancelPendingActions: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val scrollState = rememberScrollState()
 
-    // Screen dimensions
     val config = LocalConfiguration.current
     val density = LocalDensity.current
     val screenWidthPx = with(density) { config.screenWidthDp.dp.roundToPx() }
     val screenHeightPx = with(density) { config.screenHeightDp.dp.roundToPx() }
 
-    // Calibration coordinates (default Level Devil landscape positions)
+    // Calibration coordinates
     var leftX by remember(state.leftBtnX) { mutableFloatStateOf(state.leftBtnX) }
     var leftY by remember(state.leftBtnY) { mutableFloatStateOf(state.leftBtnY) }
     var rightX by remember(state.rightBtnX) { mutableFloatStateOf(state.rightBtnX) }
@@ -90,6 +94,11 @@ fun TouchInputScreen(
     var playerSeedY by remember(state.playerSeedY) { mutableFloatStateOf(state.playerSeedY) }
     var activeHandle by remember { mutableIntStateOf(-1) }
 
+    // Timing state
+    var tapDuration by remember(state.tapDurationMs) { mutableLongStateOf(state.tapDurationMs) }
+    var holdDuration by remember(state.holdDurationMs) { mutableLongStateOf(state.holdDurationMs) }
+    var sequenceDelay by remember(state.sequenceDelayMs) { mutableLongStateOf(state.sequenceDelayMs) }
+
     Column(
         modifier = modifier
             .fillMaxSize()
@@ -98,7 +107,7 @@ fun TouchInputScreen(
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
 
-        // Accessibility Service Status Card
+        // 1. Accessibility Service Status Card
         Card(
             modifier = Modifier.fillMaxWidth(),
             colors = CardDefaults.cardColors(
@@ -134,7 +143,7 @@ fun TouchInputScreen(
                                 letterSpacing = 1.sp
                             )
                             Text(
-                                text = if (state.isAccessibilityConnected) "Connected & Bound to Android OS" else "Service Not Enabled",
+                                text = if (state.isAccessibilityConnected) "Connected & Authorized" else "Service Not Enabled",
                                 fontSize = 16.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = MaterialTheme.colorScheme.onSurface
@@ -147,9 +156,9 @@ fun TouchInputScreen(
 
                 Text(
                     text = if (state.isAccessibilityConnected)
-                        "The Level Devil AI Accessibility Service is currently connected. It can simulate precise taps on the screen via Android's dispatchGesture() API without root."
+                        "The Level Devil AI Accessibility Service is active and bound to Android OS. It dispatches hardware taps, continuous holds, and dual-touch strokes via dispatchGesture()."
                     else
-                        "Android security prevents standard apps from tapping on other apps. You must enable 'Level Devil AI Touch Dispatcher' in Android System Accessibility Settings to allow touch injection.",
+                        "Android security sandbox restricts cross-app input injection. You must enable 'Level Devil AI Touch Dispatcher' in Android System Settings -> Accessibility.",
                     fontSize = 12.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -180,11 +189,10 @@ fun TouchInputScreen(
                     ) {
                         Icon(imageVector = Icons.Default.PlayArrow, contentDescription = null, modifier = Modifier.size(16.dp))
                         Spacer(modifier = Modifier.width(6.dp))
-                        Text("Run Self-Test", fontSize = 12.sp)
+                        Text("Test Single Tap", fontSize = 12.sp)
                     }
                 }
 
-                // Self-Test result banner
                 if (state.inputStatus == InputStatus.TEST_VERIFIED || state.inputStatus == InputStatus.TEST_FAILED) {
                     Spacer(modifier = Modifier.height(10.dp))
                     Box(
@@ -197,7 +205,7 @@ fun TouchInputScreen(
                     ) {
                         Text(
                             text = if (state.inputStatus == InputStatus.TEST_VERIFIED)
-                                "✓ Self-Test Verified: Android OS successfully acknowledged gesture dispatch (${state.inputLatencyMs}ms latency)."
+                                "✓ Self-Test Verified: Android OS successfully acknowledged gesture dispatch in ${state.inputLatencyMs}ms."
                             else
                                 "✗ Self-Test Failed: Android rejected or dropped gesture. Confirm Accessibility Service is turned on.",
                             fontSize = 12.sp,
@@ -209,7 +217,93 @@ fun TouchInputScreen(
             }
         }
 
-        // Virtual Touch Position Schematic & Calibration
+        // 2. Action Timing & Sequence Controls
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+            border = androidx.compose.foundation.BorderStroke(1.dp, CardBorder)
+        ) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Text(
+                        text = "GESTURE TIMING & ACTION SEQUENCES",
+                        fontSize = 11.sp,
+                        fontWeight = FontWeight.Bold,
+                        color = MaterialTheme.colorScheme.primary,
+                        letterSpacing = 1.sp
+                    )
+                    Icon(imageVector = Icons.Default.Timer, contentDescription = null, tint = CyberCyan, modifier = Modifier.size(18.dp))
+                }
+
+                Spacer(modifier = Modifier.height(10.dp))
+
+                Text("Tap Duration: ${tapDuration}ms (Used for quick Jump taps)", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                Slider(
+                    value = tapDuration.toFloat(),
+                    onValueChange = { tapDuration = it.toLong() },
+                    valueRange = 20f..300f
+                )
+
+                Text("Hold Duration: ${holdDuration}ms (Used for Left / Right directional walks)", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                Slider(
+                    value = holdDuration.toFloat(),
+                    onValueChange = { holdDuration = it.toLong() },
+                    valueRange = 50f..800f
+                )
+
+                Text("Sequence Step Delay: ${sequenceDelay}ms (Time between chained actions)", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                Slider(
+                    value = sequenceDelay.toFloat(),
+                    onValueChange = { sequenceDelay = it.toLong() },
+                    valueRange = 20f..400f
+                )
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Button(
+                        onClick = { onUpdateTimings(tapDuration, holdDuration, sequenceDelay) },
+                        modifier = Modifier
+                            .weight(1f)
+                            .testTag("save_timings_button"),
+                        colors = ButtonDefaults.buttonColors(containerColor = DarkSurfaceElevated, contentColor = MaterialTheme.colorScheme.onSurface)
+                    ) {
+                        Text("Save Timings", fontSize = 12.sp)
+                    }
+
+                    Button(
+                        onClick = { onExecuteTestSequence(screenWidthPx, screenHeightPx) },
+                        modifier = Modifier
+                            .weight(1f)
+                            .testTag("test_sequence_button"),
+                        colors = ButtonDefaults.buttonColors(containerColor = CyberCyan, contentColor = Color.Black)
+                    ) {
+                        Text("Test Sequence", fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                    }
+                }
+
+                Spacer(modifier = Modifier.height(6.dp))
+
+                OutlinedButton(
+                    onClick = onCancelPendingActions,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("cancel_actions_button"),
+                    colors = ButtonDefaults.outlinedButtonColors(contentColor = CyberRed)
+                ) {
+                    Icon(imageVector = Icons.Default.Stop, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text("Emergency Stop: Cancel All Gestures")
+                }
+            }
+        }
+
+        // 3. Four Draggable Calibration Markers & Interactive Canvas
         Card(
             modifier = Modifier.fillMaxWidth(),
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
@@ -217,7 +311,7 @@ fun TouchInputScreen(
         ) {
             Column(modifier = Modifier.padding(16.dp)) {
                 Text(
-                    text = "VIRTUAL TOUCH CALIBRATION PREVIEW",
+                    text = "VIRTUAL TOUCH CALIBRATION (4 MARKERS)",
                     fontSize = 11.sp,
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.primary,
@@ -225,14 +319,14 @@ fun TouchInputScreen(
                 )
                 Spacer(modifier = Modifier.height(8.dp))
                 Text(
-                    text = "Calibrate where touch events will be dispatched on the game screen. Positions correspond to Level Devil's virtual arrow and jump buttons.",
+                    text = "Drag markers on the interactive preview below, or use the sliders. Saving persists all 8 coordinates to device storage.",
                     fontSize = 12.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
 
                 Spacer(modifier = Modifier.height(12.dp))
 
-                // Interactive schematic of phone screen
+                // Interactive schematic of phone screen with 4 draggable markers
                 Box(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -272,25 +366,20 @@ fun TouchInputScreen(
                         val w = size.width
                         val h = size.height
 
-                        // Draw Left Button target
-                        drawCircle(
-                            color = AmberPrimary,
-                            radius = 24f,
-                            center = Offset(leftX * w, leftY * h)
-                        )
+                        // Draw Left Button target (Handle 0)
+                        drawCircle(color = AmberPrimary, radius = 24f, center = Offset(leftX * w, leftY * h))
+                        drawCircle(color = Color.White, radius = 28f, center = Offset(leftX * w, leftY * h), style = androidx.compose.ui.graphics.drawscope.Stroke(width = 2f))
 
-                        // Draw Right Button target
-                        drawCircle(
-                            color = AmberPrimary,
-                            radius = 24f,
-                            center = Offset(rightX * w, rightY * h)
-                        )
+                        // Draw Right Button target (Handle 1)
+                        drawCircle(color = AmberPrimary, radius = 24f, center = Offset(rightX * w, rightY * h))
+                        drawCircle(color = Color.White, radius = 28f, center = Offset(rightX * w, rightY * h), style = androidx.compose.ui.graphics.drawscope.Stroke(width = 2f))
 
-                        // Draw Jump Button target
+                        // Draw Jump Button target (Handle 2)
                         drawCircle(color = CyberCyan, radius = 28f, center = Offset(jumpX * w, jumpY * h))
+
+                        // Draw Player Seed Target (Handle 3)
                         drawCircle(color = CyberGreen, radius = 20f, center = Offset(playerSeedX * w, playerSeedY * h))
-                        drawCircle(color = Color.White, radius = 25f, center = Offset(playerSeedX * w, playerSeedY * h),
-                            style = androidx.compose.ui.graphics.drawscope.Stroke(width = 2f))
+                        drawCircle(color = Color.White, radius = 26f, center = Offset(playerSeedX * w, playerSeedY * h), style = androidx.compose.ui.graphics.drawscope.Stroke(width = 2f))
                     }
 
                     // Labels
@@ -326,12 +415,14 @@ fun TouchInputScreen(
                 Text("Jump Button (X: ${(jumpX * 100).toInt()}%, Y: ${(jumpY * 100).toInt()}%)", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                 Slider(value = jumpX, onValueChange = { jumpX = it }, valueRange = 0.02f..0.98f)
 
+                Spacer(modifier = Modifier.height(6.dp))
+
                 Text(
-                    "Player seed (X: ${(playerSeedX * 100).toInt()}%, Y: ${(playerSeedY * 100).toInt()}%) — drag the green marker onto the player before capture starts.",
-                    fontSize = 12.sp, color = CyberGreen
+                    "Player Seed (X: ${(playerSeedX * 100).toInt()}%, Y: ${(playerSeedY * 100).toInt()}%) — Seed for vision tracker initialization",
+                    fontSize = 12.sp, color = CyberGreen, fontWeight = FontWeight.SemiBold
                 )
-                Text("Drag any of the four markers to adjust both X and Y. Saving stores all coordinates on this device.",
-                    fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Slider(value = playerSeedX, onValueChange = { playerSeedX = it }, valueRange = 0.02f..0.98f)
+
                 Spacer(modifier = Modifier.height(10.dp))
 
                 Button(

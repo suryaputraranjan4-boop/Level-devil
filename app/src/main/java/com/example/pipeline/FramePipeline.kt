@@ -11,7 +11,7 @@ import com.example.agent.RewardFunction
 import com.example.agent.Transition
 import com.example.data.AppDatabase
 import com.example.data.CheckpointEntity
-import com.example.data.TrainingSessionEntity
+import com.example.input.ActionStep
 import com.example.input.InputController
 import com.example.input.InputStatus
 import com.example.service.LevelDevilAccessibilityService
@@ -20,6 +20,7 @@ import com.example.vision.DetectionResult
 import com.example.vision.GameObservation
 import com.example.vision.HeuristicColorEdgeDetector
 import com.example.vision.LevelDevilVisionDetector
+import com.example.vision.MovementDirection
 import com.example.vision.SyntheticLevelDevilFrameGenerator
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -32,10 +33,18 @@ import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import java.util.concurrent.atomic.AtomicBoolean
+import kotlin.math.abs
 
 enum class PipelineSourceMode {
     LIVE_SCREEN,
     SYNTHETIC_SIMULATION
+}
+
+enum class AutomationState(val label: String) {
+    STOPPED("Stopped"),
+    RUNNING("Running"),
+    PAUSED("Paused"),
+    ERROR_PAUSED("Error (Paused)")
 }
 
 data class DashboardState(
@@ -55,6 +64,16 @@ data class DashboardState(
     val isTrainingActive: Boolean = false,
     val sourceMode: PipelineSourceMode = PipelineSourceMode.SYNTHETIC_SIMULATION,
     val inputStatus: InputStatus = InputStatus.DISCONNECTED_DISABLED,
+    val automationState: AutomationState = AutomationState.STOPPED,
+    val visionStatus: String = "Awaiting Frame Ingestion",
+    val lastActionResult: String = "No actions dispatched yet",
+    val lastDetectedPlayerPos: String = "Unknown",
+    val playerVelocityDesc: String = "Stationary",
+    val nextObstacleDesc: String = "None Detected",
+    val isGestureInProgress: Boolean = false,
+    val tapDurationMs: Long = 60L,
+    val holdDurationMs: Long = 220L,
+    val sequenceDelayMs: Long = 100L,
     val leftBtnX: Float = 0.14f,
     val leftBtnY: Float = 0.85f,
     val rightBtnX: Float = 0.32f,
@@ -87,7 +106,10 @@ class FramePipeline(
             jumpBtnX = inputController.calibration.jumpBtnX,
             jumpBtnY = inputController.calibration.jumpBtnY,
             playerSeedX = inputController.calibration.playerSeedX,
-            playerSeedY = inputController.calibration.playerSeedY
+            playerSeedY = inputController.calibration.playerSeedY,
+            tapDurationMs = inputController.tapDurationMs,
+            holdDurationMs = inputController.holdDurationMs,
+            sequenceDelayMs = inputController.sequenceDelayMs
         )
     )
     val state: StateFlow<DashboardState> = _state.asStateFlow()
@@ -98,7 +120,10 @@ class FramePipeline(
             leftBtnX = c.leftBtnX, leftBtnY = c.leftBtnY,
             rightBtnX = c.rightBtnX, rightBtnY = c.rightBtnY,
             jumpBtnX = c.jumpBtnX, jumpBtnY = c.jumpBtnY,
-            playerSeedX = c.playerSeedX, playerSeedY = c.playerSeedY
+            playerSeedX = c.playerSeedX, playerSeedY = c.playerSeedY,
+            tapDurationMs = inputController.tapDurationMs,
+            holdDurationMs = inputController.holdDurationMs,
+            sequenceDelayMs = inputController.sequenceDelayMs
         )
     }
 
@@ -131,6 +156,16 @@ class FramePipeline(
                     isAccessibilityConnected = connected,
                     inputStatus = inputController.status.value
                 )
+                if (!connected && _state.value.automationState == AutomationState.RUNNING) {
+                    stopAutomation("Accessibility Service disconnected. Automation halted.")
+                }
+            }
+        }
+
+        // Collect gesture in-progress state
+        scope.launch {
+            LevelDevilAccessibilityService.isGestureInProgress.collect { inProgress ->
+                _state.value = _state.value.copy(isGestureInProgress = inProgress)
             }
         }
 
@@ -140,12 +175,80 @@ class FramePipeline(
                 _state.value = _state.value.copy(isCapturing = capturing)
                 if (capturing) {
                     setSourceMode(PipelineSourceMode.LIVE_SCREEN)
+                } else if (_state.value.sourceMode == PipelineSourceMode.LIVE_SCREEN && _state.value.automationState == AutomationState.RUNNING) {
+                    stopAutomation("Screen capture stopped. Automation halted.")
                 }
             }
         }
     }
 
+    // --- Automation Lifecycle Controls ---
+
+    /**
+     * Starts the real automation loop. Never starts automatically on launch.
+     */
+    fun startAutomation() {
+        inputController.checkStatus()
+
+        if (!_state.value.isAccessibilityConnected) {
+            _state.value = _state.value.copy(
+                automationState = AutomationState.ERROR_PAUSED,
+                statusMessage = "Cannot start automation: Accessibility Service is not enabled."
+            )
+            return
+        }
+
+        if (_state.value.sourceMode == PipelineSourceMode.LIVE_SCREEN && !_state.value.isCapturing) {
+            _state.value = _state.value.copy(
+                automationState = AutomationState.ERROR_PAUSED,
+                statusMessage = "Cannot start automation: Screen capture is not active."
+            )
+            return
+        }
+
+        // Reset vision tracker with seed
+        visionDetector.resetTracker()
+
+        _state.value = _state.value.copy(
+            automationState = AutomationState.RUNNING,
+            statusMessage = "Automation loop RUNNING. Continuous vision-to-action active."
+        )
+    }
+
+    /**
+     * Safely cancels pending actions and stops automation immediately.
+     */
+    fun stopAutomation(customMessage: String? = null) {
+        inputController.cancelPendingActions()
+        _state.value = _state.value.copy(
+            automationState = AutomationState.STOPPED,
+            currentAction = PlayerAction.WAIT,
+            statusMessage = customMessage ?: "Automation STOPPED by user. Action dispatch halted safely."
+        )
+    }
+
+    /**
+     * Pauses automation dispatch while keeping frame capture running.
+     */
+    fun pauseAutomation() {
+        inputController.cancelPendingActions()
+        _state.value = _state.value.copy(
+            automationState = AutomationState.PAUSED,
+            statusMessage = "Automation PAUSED. Visual tracking continues without touch dispatch."
+        )
+    }
+
+    /**
+     * Resumes automation if requirements are met.
+     */
+    fun resumeAutomation() {
+        startAutomation()
+    }
+
     fun setSourceMode(mode: PipelineSourceMode) {
+        if (_state.value.automationState == AutomationState.RUNNING) {
+            stopAutomation("Source mode changed. Automation stopped.")
+        }
         _state.value = _state.value.copy(sourceMode = mode)
         if (mode == PipelineSourceMode.SYNTHETIC_SIMULATION) {
             startSimulationRunner()
@@ -162,6 +265,30 @@ class FramePipeline(
         )
     }
 
+    fun updateTimings(tapMs: Long, holdMs: Long, seqDelayMs: Long) {
+        inputController.updateTimingSettings(tapMs, holdMs, seqDelayMs)
+        publishCalibration()
+    }
+
+    fun executeTestSequence(steps: List<ActionStep>, screenWidth: Int, screenHeight: Int) {
+        inputController.executeSequence(
+            steps = steps,
+            screenWidth = screenWidth,
+            screenHeight = screenHeight,
+            onStepDispatched = { idx, step, success ->
+                _state.value = _state.value.copy(
+                    currentAction = step.action,
+                    lastActionResult = "Step ${idx + 1}/${steps.size}: ${step.action.displayName} -> ${if (success) "Success" else "Failed"}"
+                )
+            },
+            onSequenceCompleted = { allSuccess ->
+                _state.value = _state.value.copy(
+                    lastActionResult = if (allSuccess) "Test Sequence Completed Successfully" else "Test Sequence Finished with Warnings"
+                )
+            }
+        )
+    }
+
     /**
      * Entry point for frames coming from ScreenCaptureService.
      */
@@ -172,7 +299,7 @@ class FramePipeline(
 
     /**
      * Complete end-to-end processing pipeline:
-     * Frame -> Vision -> Observation & Reward -> Agent Decision -> Touch Dispatch -> Training Update
+     * Frame -> Vision Tracking -> State Evaluation -> Decision Selection -> Touch Dispatch -> Training Update
      */
     fun processFramePipeline(frame: Bitmap, captureLatencyMs: Long) {
         if (!isProcessingFrame.compareAndSet(false, true)) {
@@ -183,27 +310,75 @@ class FramePipeline(
         try {
             val totalStartNs = System.nanoTime()
 
-            // 1. Vision Module
-            val detectionResult = visionDetector.processFrame(frame, previousFrame)
+            // 1. Vision Module: Continuous seed-guided detection
+            val detectionResult = visionDetector.processFrame(
+                currentFrame = frame,
+                previousFrame = previousFrame,
+                playerSeedX = _state.value.playerSeedX,
+                playerSeedY = _state.value.playerSeedY
+            )
             val currObs = detectionResult.observation
+
+            // Tracking and Telemetry descriptors
+            val visionStatusText: String
+            val playerPosText: String
+            val velocityText: String
+            val nextObstacleText: String
+
+            if (currObs.playerDetected && currObs.playerBox != null) {
+                val pBox = currObs.playerBox
+                visionStatusText = currObs.trackingStatusMessage
+                playerPosText = "X: ${(pBox.centerX() * 100).toInt()}%, Y: ${(pBox.centerY() * 100).toInt()}%"
+                velocityText = "${currObs.movementDirection.label} (vx: ${String.format("%.2f", currObs.playerVelocityX)}, vy: ${String.format("%.2f", currObs.playerVelocityY)})"
+                nextObstacleText = currObs.nextObstacle?.let {
+                    val distPercent = (abs(it.boundingBox.centerX() - pBox.centerX()) * 100).toInt()
+                    "${it.label} ($distPercent% ahead)"
+                } ?: "Path Clear"
+            } else {
+                visionStatusText = "Player Lost / Obstructed. Dispatch Paused."
+                playerPosText = "Searching..."
+                velocityText = "Stationary"
+                nextObstacleText = "None"
+            }
 
             // 2. Game Agent Observation & Action Selection
             val agentStartNs = System.nanoTime()
             val currState = RLState.fromObservation(currObs)
             val isTraining = _state.value.isTrainingActive
-            val selectedAction = gameAgent.selectAction(currObs, explore = isTraining)
+            val isAutomationRunning = _state.value.automationState == AutomationState.RUNNING
+
+            // Only decide new action if player is detected
+            val selectedAction = if (currObs.playerDetected) {
+                gameAgent.selectAction(currObs, explore = isTraining)
+            } else {
+                PlayerAction.WAIT
+            }
+
             val qValues = gameAgent.getQValues(currState)
             val agentLatencyMs = (System.nanoTime() - agentStartNs) / 1_000_000
 
-            // 3. Touch Input Dispatch
+            // 3. Real Touch Input Dispatch
             var inputLatencyMs = 0L
-            if (_state.value.sourceMode == PipelineSourceMode.LIVE_SCREEN) {
-                inputController.dispatchAction(
-                    selectedAction,
-                    frame.width,
-                    frame.height
-                ) { _, latency ->
-                    inputLatencyMs = latency
+            var dispatchResultMsg = _state.value.lastActionResult
+
+            if (isAutomationRunning && _state.value.isAccessibilityConnected) {
+                if (currObs.playerDetected) {
+                    inputController.dispatchAction(
+                        selectedAction,
+                        frame.width,
+                        frame.height
+                    ) { success, latency ->
+                        inputLatencyMs = latency
+                        dispatchResultMsg = if (success) {
+                            "Executed ${selectedAction.displayName} in ${latency}ms"
+                        } else {
+                            "Dispatch ${selectedAction.displayName} dropped or canceled by OS"
+                        }
+                    }
+                } else {
+                    // Player lost: release held touches and pause dispatch
+                    inputController.dispatchAction(PlayerAction.RELEASE, frame.width, frame.height)
+                    dispatchResultMsg = "Player detection lost: Touch dispatch paused."
                 }
             }
 
@@ -253,7 +428,12 @@ class FramePipeline(
                 inputLatencyMs = inputLatencyMs,
                 totalLatencyMs = totalLatencyMs,
                 agentMetrics = gameAgent.getMetrics(),
-                inputStatus = inputController.status.value
+                inputStatus = inputController.status.value,
+                visionStatus = visionStatusText,
+                lastDetectedPlayerPos = playerPosText,
+                playerVelocityDesc = velocityText,
+                nextObstacleDesc = nextObstacleText,
+                lastActionResult = dispatchResultMsg
             )
         } catch (e: Exception) {
             e.printStackTrace()
@@ -301,7 +481,7 @@ class FramePipeline(
                     simPlayerX = 0.15f
                 }
 
-                delay(50) // ~20 FPS in simulation mode for battery & responsiveness
+                delay(50) // ~20 FPS in simulation mode
             }
         }
     }

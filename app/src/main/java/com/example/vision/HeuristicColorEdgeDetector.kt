@@ -2,6 +2,7 @@ package com.example.vision
 
 import android.graphics.Bitmap
 import android.graphics.Color
+import android.graphics.PointF
 import android.graphics.RectF
 import kotlin.math.abs
 import kotlin.math.hypot
@@ -11,10 +12,12 @@ import kotlin.math.min
 /**
  * Concrete, high-speed game-specific computer vision detector for Level Devil.
  *
- * Employs:
+ * Implements:
  * 1. Palette-aware color segmentation (Player yellow box, solid dark platforms, door portal).
- * 2. Temporal differential motion detection (identifying dynamic popping traps and collapsing floors).
- * 3. Geometric contour bounds & distance analysis for physics state estimation (grounded, nearest hazards).
+ * 2. Seed-to-continuous optical tracking: uses the calibrated player seed coordinate to initialize,
+ *    then dynamically tracks player bounding box, displacement velocity, and movement direction across frames.
+ * 3. Temporal differential motion detection (identifying dynamic popping traps and collapsing floors).
+ * 4. Spatial lookahead identifying the next relevant obstacle (spikes, traps) in the path to the exit door.
  *
  * Runs in under 5ms on a standard Android phone CPU without GPU/NPU overhead.
  */
@@ -23,17 +26,39 @@ class HeuristicColorEdgeDetector(
     private val processHeight: Int = 90
 ) : LevelDevilVisionDetector {
 
-    override val detectorName: String = "Level Devil Heuristic & Temporal Differential Detector"
+    override val detectorName: String = "Level Devil Continuous Seed-Guided Vision Tracker"
     override val description: String =
-        "Hardware-accelerated color segmentation and inter-frame motion differential tracking optimized for Level Devil's minimalist geometry."
+        "Hardware-accelerated color segmentation, seed-initialized continuous player tracking, and temporal motion differential analysis."
 
-    // Reusable buffers to eliminate garbage collection allocation spikes during 30/60fps processing
+    // Reusable buffers to eliminate garbage collection allocation spikes during continuous capture
     private var pixelBuffer = IntArray(processWidth * processHeight)
     private var prevPixelBuffer: IntArray? = null
-    private var scaledBitmap: Bitmap? = null
 
-    override fun processFrame(currentFrame: Bitmap, previousFrame: Bitmap?): DetectionResult {
+    // Continuous player tracking state
+    private var lastTrackedBox: RectF? = null
+    private var trackedVelocityX: Float = 0f
+    private var trackedVelocityY: Float = 0f
+    private var consecutiveLostFrames: Int = 0
+
+    override fun resetTracker() {
+        lastTrackedBox = null
+        trackedVelocityX = 0f
+        trackedVelocityY = 0f
+        consecutiveLostFrames = 0
+    }
+
+    override fun processFrame(
+        currentFrame: Bitmap,
+        previousFrame: Bitmap?,
+        playerSeedX: Float?,
+        playerSeedY: Float?,
+        resetTracking: Boolean
+    ): DetectionResult {
         val startTime = System.nanoTime()
+
+        if (resetTracking) {
+            resetTracker()
+        }
 
         // Downscale to standardized processing dimensions for predictable < 5ms latency
         val bmp = Bitmap.createScaledBitmap(currentFrame, processWidth, processHeight, false)
@@ -56,21 +81,14 @@ class HeuristicColorEdgeDetector(
 
         val detectedObjects = mutableListOf<DetectedObject>()
 
-        // 1. Detect Player (Yellow smiley block: high red & green, low blue; or distinctive yellow square)
-        var playerMinX = w
-        var playerMaxX = -1
-        var playerMinY = h
-        var playerMaxY = -1
-        var playerPixelCount = 0
-
-        // 2. Detect Exit Door (distinct dark brown/portal hue)
+        // 1. Detect Exit Door (distinct dark brown/portal hue)
         var doorMinX = w
         var doorMaxX = -1
         var doorMinY = h
         var doorMaxY = -1
         var doorPixelCount = 0
 
-        // 3. Detect Moving Obstacles via temporal differencing against previous frame
+        // 2. Detect Moving Obstacles via temporal differencing against previous frame
         val motionPixels = BooleanArray(totalPixels)
         var movingMinX = w
         var movingMaxX = -1
@@ -80,7 +98,7 @@ class HeuristicColorEdgeDetector(
 
         val hasPrev = prevPixelBuffer != null && prevPixelBuffer?.size == totalPixels
 
-        // Single pass pixel scan
+        // Single pass pixel scan for static elements and motion
         for (y in 0 until h) {
             val rowOffset = y * w
             for (x in 0 until w) {
@@ -89,15 +107,7 @@ class HeuristicColorEdgeDetector(
                 val g = (pixel shr 8) and 0xFF
                 val b = pixel and 0xFF
 
-                // Check for Yellow player box (e.g. R > 190, G > 160, B < 120 and R+G >> B)
                 val isYellow = r > 180 && g > 150 && b < 130 && (r - b > 70) && (g - b > 50)
-                if (isYellow) {
-                    playerPixelCount++
-                    if (x < playerMinX) playerMinX = x
-                    if (x > playerMaxX) playerMaxX = x
-                    if (y < playerMinY) playerMinY = y
-                    if (y > playerMaxY) playerMaxY = y
-                }
 
                 // Check for Exit Door (Dark brown/wooden frame or arched portal: R ~ 40-175, G ~ 20-115, B ~ 10-80)
                 val isDoorColor = r in 40..175 && g in 20..115 && b in 10..80 && (r > g) && (g >= b)
@@ -135,20 +145,90 @@ class HeuristicColorEdgeDetector(
         }
         System.arraycopy(pixelBuffer, 0, prevPixelBuffer!!, 0, totalPixels)
 
+        // 3. Continuous Seed-to-Observation Player Tracking
         var playerBox: RectF? = null
-        if (playerPixelCount in 10..400) {
-            playerBox = RectF(
-                playerMinX.toFloat() / w,
-                playerMinY.toFloat() / h,
-                (playerMaxX + 1).toFloat() / w,
-                (playerMaxY + 1).toFloat() / h
-            )
+        var trackingStatus = "Idle"
+
+        if (lastTrackedBox != null && consecutiveLostFrames < 5) {
+            // Predict candidate region using previous position and velocity
+            val predictedCenterX = (lastTrackedBox!!.centerX() + trackedVelocityX).coerceIn(0.05f, 0.95f)
+            val predictedCenterY = (lastTrackedBox!!.centerY() + trackedVelocityY).coerceIn(0.05f, 0.95f)
+
+            // Localized search window (+/- 18% in X, +/- 20% in Y)
+            val searchLeft = max(0, ((predictedCenterX - 0.18f) * w).toInt())
+            val searchRight = min(w - 1, ((predictedCenterX + 0.18f) * w).toInt())
+            val searchTop = max(0, ((predictedCenterY - 0.20f) * h).toInt())
+            val searchBottom = min(h - 1, ((predictedCenterY + 0.20f) * h).toInt())
+
+            playerBox = findYellowBlockInWindow(searchLeft, searchRight, searchTop, searchBottom, w, h)
+
+            if (playerBox != null) {
+                // Update velocity estimate
+                val prevCenter = PointF(lastTrackedBox!!.centerX(), lastTrackedBox!!.centerY())
+                val newCenter = PointF(playerBox.centerX(), playerBox.centerY())
+                trackedVelocityX = (newCenter.x - prevCenter.x).coerceIn(-0.15f, 0.15f)
+                trackedVelocityY = (newCenter.y - prevCenter.y).coerceIn(-0.15f, 0.15f)
+                lastTrackedBox = playerBox
+                consecutiveLostFrames = 0
+                trackingStatus = "Continuous Tracking (Locked)"
+            } else {
+                consecutiveLostFrames++
+                trackingStatus = "Localized Search Missed (Frame $consecutiveLostFrames)"
+            }
+        }
+
+        // If not found in localized window or tracker not started yet, try seed or global search
+        if (playerBox == null) {
+            if (playerSeedX != null && playerSeedY != null && lastTrackedBox == null) {
+                // Search around calibrated seed point (+/- 20% window)
+                val sLeft = max(0, ((playerSeedX - 0.20f) * w).toInt())
+                val sRight = min(w - 1, ((playerSeedX + 0.20f) * w).toInt())
+                val sTop = max(0, ((playerSeedY - 0.20f) * h).toInt())
+                val sBottom = min(h - 1, ((playerSeedY + 0.20f) * h).toInt())
+
+                playerBox = findYellowBlockInWindow(sLeft, sRight, sTop, sBottom, w, h)
+                if (playerBox != null) {
+                    lastTrackedBox = playerBox
+                    trackedVelocityX = 0f
+                    trackedVelocityY = 0f
+                    consecutiveLostFrames = 0
+                    trackingStatus = "Initialized from Player Seed"
+                }
+            }
+
+            // Fallback to full-frame search if seed search or localized search did not yield player
+            if (playerBox == null) {
+                playerBox = findYellowBlockInWindow(0, w - 1, 0, h - 1, w, h)
+                if (playerBox != null) {
+                    lastTrackedBox = playerBox
+                    consecutiveLostFrames = 0
+                    trackingStatus = "Acquired via Full-Frame Scan"
+                } else {
+                    lastTrackedBox = null
+                    trackingStatus = "Player Detection Lost / Obstructed"
+                }
+            }
+        }
+
+        // Calculate Movement Direction
+        val movementDirection = when {
+            playerBox == null -> MovementDirection.STATIONARY
+            trackedVelocityY < -0.012f -> MovementDirection.JUMPING
+            trackedVelocityY > 0.012f -> MovementDirection.FALLING
+            trackedVelocityX > 0.008f -> MovementDirection.MOVING_RIGHT
+            trackedVelocityX < -0.008f -> MovementDirection.MOVING_LEFT
+            else -> MovementDirection.STATIONARY
+        }
+
+        if (playerBox != null) {
             detectedObjects.add(
                 DetectedObject(
                     type = ObjectType.PLAYER,
                     boundingBox = playerBox,
-                    confidence = min(1.0f, playerPixelCount / 40f),
-                    label = "Player (x:${(playerBox.centerX() * 100).toInt()}%, y:${(playerBox.centerY() * 100).toInt()}%)"
+                    confidence = 0.95f,
+                    label = "Player ${movementDirection.symbol} (x:${(playerBox.centerX() * 100).toInt()}%, y:${(playerBox.centerY() * 100).toInt()}%)",
+                    velocityX = trackedVelocityX,
+                    velocityY = trackedVelocityY
                 )
             )
         }
@@ -197,11 +277,10 @@ class HeuristicColorEdgeDetector(
         }
 
         // Detect platforms and spikes (solid black horizontal segments / sharp bounds)
-        // Scan for horizontal dark runs (platforms)
         val platformBoxes = findPlatformSegments(pixelBuffer, w, h, playerBox)
         detectedObjects.addAll(platformBoxes)
 
-        // Check if player is on ground (platform immediately below player bounding box)
+        // Grounded check and distance calculations
         var isGrounded = false
         var nearestPlatformBelow = 1.0f
         var nearestSpikeDist = 1.0f
@@ -232,12 +311,43 @@ class HeuristicColorEdgeDetector(
             }
         }
 
+        // 4. Identify Next Relevant Obstacle and Platform Ahead
+        var nextObstacle: DetectedObject? = null
+        var nextPlatform: DetectedObject? = null
+
+        if (playerBox != null) {
+            val pX = playerBox.centerX()
+            val targetX = doorBox?.centerX() ?: 0.90f
+            val isMovingRight = targetX >= pX
+
+            // Find closest hazard in the direction of the target
+            var minObstacleDist = Float.MAX_VALUE
+            for (obj in detectedObjects) {
+                if (obj.type == ObjectType.SPIKE || obj.type == ObjectType.MOVING_TRAP) {
+                    val objX = obj.boundingBox.centerX()
+                    val inPath = if (isMovingRight) objX >= pX - 0.02f else objX <= pX + 0.02f
+                    if (inPath) {
+                        val dist = abs(objX - pX)
+                        if (dist < minObstacleDist) {
+                            minObstacleDist = dist
+                            nextObstacle = obj
+                        }
+                    }
+                } else if (obj.type == ObjectType.PLATFORM) {
+                    val objX = obj.boundingBox.centerX()
+                    val inPath = if (isMovingRight) objX >= pX - 0.05f else objX <= pX + 0.05f
+                    if (inPath && nextPlatform == null) {
+                        nextPlatform = obj
+                    }
+                }
+            }
+        }
+
         // Detect Death screen ("OUCH" / "TRY AGAIN" or high red/black flash)
         val isDeathScreen = detectDeathScreen(pixelBuffer, w, h)
 
         // Detect Victory screen
-        val isVictoryScreen = playerBox != null && doorBox != null &&
-                playerBox.intersect(doorBox)
+        val isVictoryScreen = playerBox != null && doorBox != null && playerBox.intersect(doorBox)
 
         val latencyMs = (System.nanoTime() - startTime) / 1_000_000
 
@@ -254,7 +364,13 @@ class HeuristicColorEdgeDetector(
             isVictoryScreen = isVictoryScreen,
             detectedObjects = detectedObjects,
             frameWidth = currentFrame.width,
-            frameHeight = currentFrame.height
+            frameHeight = currentFrame.height,
+            playerVelocityX = trackedVelocityX,
+            playerVelocityY = trackedVelocityY,
+            movementDirection = movementDirection,
+            nextObstacle = nextObstacle,
+            nextPlatform = nextPlatform,
+            trackingStatusMessage = trackingStatus
         )
 
         return DetectionResult(
@@ -263,6 +379,57 @@ class HeuristicColorEdgeDetector(
             visionLatencyMs = latencyMs,
             previewBitmap = bmp
         )
+    }
+
+    private fun findYellowBlockInWindow(
+        minX: Int,
+        maxX: Int,
+        minY: Int,
+        maxY: Int,
+        w: Int,
+        h: Int
+    ): RectF? {
+        var foundMinX = w
+        var foundMaxX = -1
+        var foundMinY = h
+        var foundMaxY = -1
+        var count = 0
+
+        val cMinX = minX.coerceIn(0, w - 1)
+        val cMaxX = maxX.coerceIn(0, w - 1)
+        val cMinY = minY.coerceIn(0, h - 1)
+        val cMaxY = maxY.coerceIn(0, h - 1)
+
+        for (y in cMinY..cMaxY) {
+            val rowOffset = y * w
+            for (x in cMinX..cMaxX) {
+                val pixel = pixelBuffer[rowOffset + x]
+                val r = (pixel shr 16) and 0xFF
+                val g = (pixel shr 8) and 0xFF
+                val b = pixel and 0xFF
+
+                // Yellow player box check
+                val isYellow = r > 180 && g > 150 && b < 130 && (r - b > 70) && (g - b > 50)
+                if (isYellow) {
+                    count++
+                    if (x < foundMinX) foundMinX = x
+                    if (x > foundMaxX) foundMaxX = x
+                    if (y < foundMinY) foundMinY = y
+                    if (y > foundMaxY) foundMaxY = y
+                }
+            }
+        }
+
+        return if (count in 10..400) {
+            RectF(
+                foundMinX.toFloat() / w,
+                foundMinY.toFloat() / h,
+                (foundMaxX + 1).toFloat() / w,
+                (foundMaxY + 1).toFloat() / h
+            )
+        } else {
+            null
+        }
     }
 
     private fun findPlatformSegments(
@@ -303,7 +470,6 @@ class HeuristicColorEdgeDetector(
                             val topNorm = y.toFloat() / h
                             val bottomNorm = min(1.0f, (y + rowStep * 2).toFloat() / h)
 
-                            // Check if this overlaps with player box
                             if (playerBox == null || !RectF(leftNorm, topNorm, rightNorm, bottomNorm).contains(playerBox)) {
                                 platforms.add(
                                     DetectedObject(
@@ -319,11 +485,10 @@ class HeuristicColorEdgeDetector(
                 }
             }
         }
-        return platforms.take(6) // Keep top significant platform anchors
+        return platforms.take(6)
     }
 
     private fun detectDeathScreen(pixels: IntArray, w: Int, h: Int): Boolean {
-        // Sample center region where "OUCH" or "TRY AGAIN" appears
         val startY = (h * 0.35).toInt()
         val endY = (h * 0.65).toInt()
         val startX = (w * 0.3).toInt()
@@ -341,7 +506,6 @@ class HeuristicColorEdgeDetector(
                 val g = (pixel shr 8) and 0xFF
                 val b = pixel and 0xFF
 
-                // Distinct red skull / death text in Level Devil
                 if (r > 180 && g < 60 && b < 60) {
                     redOrHighContrastPixels++
                 }

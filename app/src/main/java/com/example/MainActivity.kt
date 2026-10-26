@@ -78,7 +78,7 @@ class MainActivity : ComponentActivity() {
     // Permission launcher for POST_NOTIFICATIONS (Android 13+)
     private val notificationPermissionLauncher = registerForActivityResult(
         ActivityResultContracts.RequestPermission()
-    ) { /* Permission granted or denied handled gracefully */ }
+    ) { /* Handled gracefully */ }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -184,6 +184,10 @@ fun MainAppContent(
                     state = state,
                     onRequestCaptureStart = onRequestCaptureStart,
                     onStopCapture = onStopCapture,
+                    onStartAutomation = { viewModel.startAutomation() },
+                    onStopAutomation = { viewModel.stopAutomation() },
+                    onPauseAutomation = { viewModel.pauseAutomation() },
+                    onResumeAutomation = { viewModel.resumeAutomation() },
                     onToggleTraining = { viewModel.toggleTraining() },
                     onSetSourceMode = { viewModel.setSourceMode(it) },
                     onStepSimulation = { viewModel.stepSimulationOnce() }
@@ -201,6 +205,15 @@ fun MainAppContent(
                     onRunSelfTest = { w, h -> viewModel.runInputSelfTest(w, h) },
                     onUpdateCalibration = { lx, ly, rx, ry, jx, jy, sx, sy ->
                         viewModel.updateCalibration(lx, ly, rx, ry, jx, jy, sx, sy)
+                    },
+                    onUpdateTimings = { tap, hold, delay ->
+                        viewModel.updateTimingSettings(tap, hold, delay)
+                    },
+                    onExecuteTestSequence = { w, h ->
+                        viewModel.executeTestSequence(w, h)
+                    },
+                    onCancelPendingActions = {
+                        viewModel.stopAutomation()
                     }
                 )
                 3 -> ArchitectureScreen(

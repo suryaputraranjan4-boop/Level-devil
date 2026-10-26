@@ -22,15 +22,18 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.FiberManualRecord
+import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.Stop
+import androidx.compose.material.icons.filled.TouchApp
 import androidx.compose.material.icons.filled.Tune
+import androidx.compose.material.icons.filled.Visibility
+import androidx.compose.material.icons.filled.Warning
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.FilledTonalButton
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -50,7 +53,7 @@ import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.example.agent.PlayerAction
+import com.example.pipeline.AutomationState
 import com.example.pipeline.DashboardState
 import com.example.pipeline.PipelineSourceMode
 import com.example.ui.components.StatusBadge
@@ -68,6 +71,10 @@ fun LiveDashboardScreen(
     state: DashboardState,
     onRequestCaptureStart: () -> Unit,
     onStopCapture: () -> Unit,
+    onStartAutomation: () -> Unit,
+    onStopAutomation: () -> Unit,
+    onPauseAutomation: () -> Unit,
+    onResumeAutomation: () -> Unit,
     onToggleTraining: () -> Unit,
     onSetSourceMode: (PipelineSourceMode) -> Unit,
     onStepSimulation: () -> Unit,
@@ -83,7 +90,162 @@ fun LiveDashboardScreen(
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
 
-        // Source Switcher & Status Bar
+        // 1. Safe Automation Master Controls Card
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(
+                containerColor = when (state.automationState) {
+                    AutomationState.RUNNING -> Color(0xFF0F2617)
+                    AutomationState.PAUSED -> Color(0xFF26200A)
+                    AutomationState.ERROR_PAUSED -> Color(0xFF2E0F12)
+                    AutomationState.STOPPED -> MaterialTheme.colorScheme.surfaceVariant
+                }
+            ),
+            border = androidx.compose.foundation.BorderStroke(
+                1.dp,
+                when (state.automationState) {
+                    AutomationState.RUNNING -> CyberGreen
+                    AutomationState.PAUSED -> AmberPrimary
+                    AutomationState.ERROR_PAUSED -> CyberRed
+                    AutomationState.STOPPED -> CardBorder
+                }
+            )
+        ) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.TouchApp,
+                            contentDescription = null,
+                            tint = when (state.automationState) {
+                                AutomationState.RUNNING -> CyberGreen
+                                AutomationState.PAUSED -> AmberPrimary
+                                AutomationState.ERROR_PAUSED -> CyberRed
+                                AutomationState.STOPPED -> MaterialTheme.colorScheme.onSurfaceVariant
+                            },
+                            modifier = Modifier.size(24.dp)
+                        )
+                        Column {
+                            Text(
+                                text = "AUTOMATION ENGINE",
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.primary,
+                                letterSpacing = 1.sp
+                            )
+                            Text(
+                                text = "Status: ${state.automationState.label.uppercase()}",
+                                fontSize = 16.sp,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.onSurface
+                            )
+                        }
+                    }
+
+                    StatusBadge(
+                        label = state.automationState.label.uppercase(),
+                        isActive = state.automationState == AutomationState.RUNNING,
+                        activeColor = CyberGreen,
+                        inactiveColor = when (state.automationState) {
+                            AutomationState.PAUSED -> AmberPrimary
+                            AutomationState.ERROR_PAUSED -> CyberRed
+                            else -> Color.Gray
+                        }
+                    )
+                }
+
+                Spacer(modifier = Modifier.height(10.dp))
+
+                Text(
+                    text = state.statusMessage,
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+
+                Spacer(modifier = Modifier.height(12.dp))
+
+                // Master Automation Buttons
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    when (state.automationState) {
+                        AutomationState.STOPPED, AutomationState.ERROR_PAUSED -> {
+                            Button(
+                                onClick = onStartAutomation,
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .testTag("start_automation_button"),
+                                colors = ButtonDefaults.buttonColors(containerColor = CyberGreen, contentColor = Color.Black)
+                            ) {
+                                Icon(imageVector = Icons.Default.PlayArrow, contentDescription = null)
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("Start Automation", fontWeight = FontWeight.Bold)
+                            }
+                        }
+                        AutomationState.RUNNING -> {
+                            Button(
+                                onClick = onPauseAutomation,
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .testTag("pause_automation_button"),
+                                colors = ButtonDefaults.buttonColors(containerColor = AmberPrimary, contentColor = Color.Black)
+                            ) {
+                                Icon(imageVector = Icons.Default.Pause, contentDescription = null)
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("Pause", fontWeight = FontWeight.Bold)
+                            }
+
+                            Button(
+                                onClick = onStopAutomation,
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .testTag("stop_automation_button"),
+                                colors = ButtonDefaults.buttonColors(containerColor = CyberRed, contentColor = Color.White)
+                            ) {
+                                Icon(imageVector = Icons.Default.Stop, contentDescription = null)
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("Stop Automation", fontWeight = FontWeight.Bold)
+                            }
+                        }
+                        AutomationState.PAUSED -> {
+                            Button(
+                                onClick = onResumeAutomation,
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .testTag("resume_automation_button"),
+                                colors = ButtonDefaults.buttonColors(containerColor = CyberGreen, contentColor = Color.Black)
+                            ) {
+                                Icon(imageVector = Icons.Default.PlayArrow, contentDescription = null)
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("Resume", fontWeight = FontWeight.Bold)
+                            }
+
+                            Button(
+                                onClick = onStopAutomation,
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .testTag("stop_automation_button"),
+                                colors = ButtonDefaults.buttonColors(containerColor = CyberRed, contentColor = Color.White)
+                            ) {
+                                Icon(imageVector = Icons.Default.Stop, contentDescription = null)
+                                Spacer(modifier = Modifier.width(6.dp))
+                                Text("Stop", fontWeight = FontWeight.Bold)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // 2. Source Switcher & Connection Status Bar
         Row(
             modifier = Modifier.fillMaxWidth(),
             horizontalArrangement = Arrangement.SpaceBetween,
@@ -91,7 +253,7 @@ fun LiveDashboardScreen(
         ) {
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 StatusBadge(
-                    label = if (state.isCapturing) "CAPTURE: ACTIVE" else "CAPTURE: IDLE",
+                    label = if (state.isCapturing) "CAPTURE: ON" else "CAPTURE: OFF",
                     isActive = state.isCapturing,
                     activeColor = CyberGreen,
                     inactiveColor = Color.Gray
@@ -123,7 +285,29 @@ fun LiveDashboardScreen(
             }
         }
 
-        // Live Captured Screen with Vision Bounding Box Overlay
+        // Accessibility Warning Banner if not enabled
+        if (!state.isAccessibilityConnected) {
+            Card(
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(containerColor = Color(0xFF2A1014)),
+                border = androidx.compose.foundation.BorderStroke(1.dp, CyberRed)
+            ) {
+                Row(
+                    modifier = Modifier.padding(12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Icon(imageVector = Icons.Default.Warning, contentDescription = null, tint = CyberRed)
+                    Text(
+                        text = "Accessibility Service is not enabled. Touch automation is disabled. Open 'Controls' tab to authorize.",
+                        fontSize = 11.sp,
+                        color = Color(0xFFFFB3B8)
+                    )
+                }
+            }
+        }
+
+        // 3. Live Captured Screen with Vision Overlays
         Card(
             modifier = Modifier
                 .fillMaxWidth()
@@ -141,14 +325,13 @@ fun LiveDashboardScreen(
                 ) {
                     val bitmap = state.currentFrameBitmap
                     if (bitmap != null) {
-                        // Display bitmap
                         Image(
                             bitmap = bitmap.asImageBitmap(),
                             contentDescription = "Game Screen Preview",
                             modifier = Modifier.fillMaxSize()
                         )
 
-                        // Render Computer Vision Overlays (Bounding Boxes & Labels)
+                        // Render Computer Vision Overlays
                         Canvas(modifier = Modifier.fillMaxSize()) {
                             val canvasW = size.width
                             val canvasH = size.height
@@ -215,7 +398,7 @@ fun LiveDashboardScreen(
                     }
                 }
 
-                // Sub-panel under the frame showing object detections
+                // Sub-panel under the frame showing tracking state
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -225,44 +408,41 @@ fun LiveDashboardScreen(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = "Detected: ${state.observation.detectedObjects.size} objects " +
-                                "(${if (state.observation.playerDetected) "Player ✓" else "Searching..."}, " +
-                                "${if (state.observation.isGrounded) "Grounded" else "Airborne"})",
+                        text = "Vision: ${state.visionStatus}",
                         fontSize = 11.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                        color = if (state.observation.playerDetected) CyberGreen else AmberPrimary
                     )
                     Text(
-                        text = "Vision: ${state.visionLatencyMs}ms",
+                        text = "Player: ${state.lastDetectedPlayerPos}",
                         fontSize = 11.sp,
                         fontFamily = FontFamily.Monospace,
-                        color = CyberCyan
+                        color = MaterialTheme.colorScheme.onSurface
                     )
                 }
             }
         }
 
-        // Action & Decision HUD
+        // 4. Live Vision-to-Action Telemetry Card
         Card(
             modifier = Modifier.fillMaxWidth(),
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
             border = androidx.compose.foundation.BorderStroke(1.dp, CardBorder)
         ) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(16.dp),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Column {
-                    Text(
-                        text = "RL AGENT DECISION",
-                        fontSize = 11.sp,
-                        fontWeight = FontWeight.Bold,
-                        color = MaterialTheme.colorScheme.primary,
-                        letterSpacing = 1.sp
-                    )
-                    Spacer(modifier = Modifier.height(4.dp))
+            Column(modifier = Modifier.padding(16.dp)) {
+                Text(
+                    text = "VISION-TO-ACTION REASONING & DISPATCH",
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = MaterialTheme.colorScheme.primary,
+                    letterSpacing = 1.sp
+                )
+                Spacer(modifier = Modifier.height(10.dp))
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
                     Row(
                         verticalAlignment = Alignment.CenterVertically,
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
@@ -276,44 +456,69 @@ fun LiveDashboardScreen(
                         Column {
                             Text(
                                 text = state.currentAction.displayName,
-                                fontSize = 18.sp,
+                                fontSize = 17.sp,
                                 fontWeight = FontWeight.Bold,
                                 color = MaterialTheme.colorScheme.onSurface
                             )
-                            val qVal = state.actionQValues[state.currentAction] ?: 0f
                             Text(
-                                text = "Q-Value: ${String.format("%.3f", qVal)} | Epsilon: ${String.format("%.2f", state.agentMetrics.currentEpsilon)}",
-                                fontSize = 12.sp,
+                                text = state.lastActionResult,
+                                fontSize = 11.sp,
                                 fontFamily = FontFamily.Monospace,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
                     }
+
+                    Column(horizontalAlignment = Alignment.End) {
+                        StatusBadge(
+                            label = if (state.isGestureInProgress) "STROKE ACTIVE" else "IDLE",
+                            isActive = state.isGestureInProgress,
+                            activeColor = CyberCyan,
+                            inactiveColor = Color.Gray
+                        )
+                    }
                 }
 
-                // Training active pulse
-                Column(horizontalAlignment = Alignment.End) {
-                    StatusBadge(
-                        label = if (state.isTrainingActive) "TRAINING: ON" else "INFERENCE ONLY",
-                        isActive = state.isTrainingActive,
-                        activeColor = AmberPrimary,
-                        inactiveColor = Color.Gray
-                    )
-                    Spacer(modifier = Modifier.height(6.dp))
-                    Text(
-                        text = "Step: ${state.agentMetrics.totalSteps}",
-                        fontSize = 11.sp,
-                        fontFamily = FontFamily.Monospace,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+                Spacer(modifier = Modifier.height(10.dp))
+
+                // Movement & Obstacle diagnostics row
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(DarkSurfaceElevated)
+                            .padding(8.dp)
+                    ) {
+                        Column {
+                            Text("PLAYER MOTION", fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.SemiBold)
+                            Text(state.playerVelocityDesc, fontSize = 11.sp, fontWeight = FontWeight.Medium, color = CyberCyan)
+                        }
+                    }
+
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(DarkSurfaceElevated)
+                            .padding(8.dp)
+                    ) {
+                        Column {
+                            Text("NEXT OBSTACLE", fontSize = 9.sp, color = MaterialTheme.colorScheme.onSurfaceVariant, fontWeight = FontWeight.SemiBold)
+                            Text(state.nextObstacleDesc, fontSize = 11.sp, fontWeight = FontWeight.Medium, color = if (state.nextObstacleDesc.contains("Path Clear")) CyberGreen else CyberRed)
+                        }
+                    }
                 }
             }
         }
 
-        // Telemetry Grid (FPS, Latencies)
+        // 5. Latency Telemetry Grid
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text(
-                text = "PERFORMANCE & LATENCY TELEMETRY",
+                text = "REAL-TIME LATENCY & PIPELINE METRICS",
                 fontSize = 11.sp,
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -325,7 +530,7 @@ fun LiveDashboardScreen(
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 TelemetryCard(
-                    label = "Total Latency",
+                    label = "Total Loop",
                     value = "${state.totalLatencyMs}",
                     unit = "ms",
                     color = if (state.totalLatencyMs < 25) CyberGreen else AmberPrimary,
@@ -346,8 +551,8 @@ fun LiveDashboardScreen(
                     modifier = Modifier.weight(1f)
                 )
                 TelemetryCard(
-                    label = "RL Policy",
-                    value = "${state.agentLatencyMs}",
+                    label = "Input Dispatch",
+                    value = "${state.inputLatencyMs}",
                     unit = "ms",
                     color = AmberPrimary,
                     modifier = Modifier.weight(1f)
@@ -355,10 +560,10 @@ fun LiveDashboardScreen(
             }
         }
 
-        // Live Control Actions
+        // 6. Pipeline Capture & Mode Controls
         Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
             Text(
-                text = "PIPELINE CONTROLS",
+                text = "FRAME CAPTURE CONTROLS",
                 fontSize = 11.sp,
                 fontWeight = FontWeight.Bold,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -377,7 +582,7 @@ fun LiveDashboardScreen(
                             .testTag("start_capture_button"),
                         colors = ButtonDefaults.buttonColors(containerColor = AmberPrimary, contentColor = Color.Black)
                     ) {
-                        Icon(imageVector = Icons.Default.PlayArrow, contentDescription = null)
+                        Icon(imageVector = Icons.Default.Visibility, contentDescription = null)
                         Spacer(modifier = Modifier.width(6.dp))
                         Text("Start Capture", fontWeight = FontWeight.Bold)
                     }
@@ -420,7 +625,7 @@ fun LiveDashboardScreen(
                 ) {
                     Icon(imageVector = Icons.Default.Refresh, contentDescription = null)
                     Spacer(modifier = Modifier.width(6.dp))
-                    Text("Step Synthetic Simulation Frame (+1 tick)")
+                    Text("Step Synthetic Simulation (+1 frame tick)")
                 }
             }
         }

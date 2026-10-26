@@ -12,6 +12,14 @@ enum class ObjectType {
     UNKNOWN
 }
 
+enum class MovementDirection(val label: String, val symbol: String) {
+    STATIONARY("Stationary", "●"),
+    MOVING_LEFT("Moving Left", "←"),
+    MOVING_RIGHT("Moving Right", "→"),
+    JUMPING("Jumping Up", "↑"),
+    FALLING("Falling Down", "↓")
+}
+
 data class DetectedObject(
     val type: ObjectType,
     val boundingBox: RectF, // Normalized 0.0 to 1.0 (left, top, right, bottom)
@@ -34,7 +42,13 @@ data class GameObservation(
     val isVictoryScreen: Boolean = false,
     val detectedObjects: List<DetectedObject> = emptyList(),
     val frameWidth: Int = 0,
-    val frameHeight: Int = 0
+    val frameHeight: Int = 0,
+    val playerVelocityX: Float = 0f,
+    val playerVelocityY: Float = 0f,
+    val movementDirection: MovementDirection = MovementDirection.STATIONARY,
+    val nextObstacle: DetectedObject? = null,
+    val nextPlatform: DetectedObject? = null,
+    val trackingStatusMessage: String = "Idle"
 )
 
 data class DetectionResult(
@@ -49,9 +63,23 @@ interface LevelDevilVisionDetector {
     val description: String
 
     /**
-     * Processes a game frame and detects game elements.
+     * Processes a game frame and detects game elements with optional player seed tracking.
      * @param currentFrame The freshly captured game frame bitmap.
      * @param previousFrame Optional prior frame used for temporal motion differential detection.
+     * @param playerSeedX Optional initial normalized X seed coordinate to initialize player tracking.
+     * @param playerSeedY Optional initial normalized Y seed coordinate to initialize player tracking.
+     * @param resetTracking When true, forces the tracker to re-initialize using the seed.
      */
-    fun processFrame(currentFrame: Bitmap, previousFrame: Bitmap?): DetectionResult
+    fun processFrame(
+        currentFrame: Bitmap,
+        previousFrame: Bitmap?,
+        playerSeedX: Float? = null,
+        playerSeedY: Float? = null,
+        resetTracking: Boolean = false
+    ): DetectionResult
+
+    /**
+     * Clears tracked player state and velocity.
+     */
+    fun resetTracker()
 }

@@ -16,7 +16,6 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
-import androidx.compose.material3.ElevatedCard
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -58,7 +57,7 @@ fun ArchitectureScreen(
         verticalArrangement = Arrangement.spacedBy(16.dp)
     ) {
 
-        // Phase 1 Status Banner
+        // Part 3 Architecture Status Banner
         Card(
             modifier = Modifier.fillMaxWidth(),
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
@@ -66,7 +65,7 @@ fun ArchitectureScreen(
         ) {
             Column(modifier = Modifier.padding(16.dp)) {
                 Text(
-                    text = "PHASE 1 ARCHITECTURE & FOUNDATION",
+                    text = "PART 3 — TOUCH CONTROL & GAMEPLAY AUTOMATION",
                     fontSize = 12.sp,
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.primary,
@@ -74,14 +73,14 @@ fun ArchitectureScreen(
                 )
                 Spacer(modifier = Modifier.height(6.dp))
                 Text(
-                    text = "A complete, production-grade foundation for autonomous Level Devil gameplay: continuous screen vision, real Android gesture dispatch, Q-learning policy, and hardware telemetry.",
+                    text = "Real Android touch-control architecture using AccessibilityService.dispatchGesture(), continuous seed-initialized optical vision tracking, safe automation lifecycle (Start/Stop/Pause/Resume), and stroke cancellation.",
                     fontSize = 13.sp,
                     color = MaterialTheme.colorScheme.onSurface
                 )
             }
         }
 
-        // Memory & Hardware Optimization for 8GB RAM devices
+        // Memory & Hardware Optimization
         Card(
             modifier = Modifier.fillMaxWidth(),
             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
@@ -126,16 +125,16 @@ fun ArchitectureScreen(
 
                 Spacer(modifier = Modifier.height(8.dp))
                 Text(
-                    text = "• In-memory frame ingestion: Zero image files are written to disk, preventing Flash storage wear and I/O bottlenecks.\n" +
+                    text = "• In-memory frame ingestion: Zero image files are written to disk, preventing Flash wear and I/O bottlenecks.\n" +
                             "• Reusable bitmap buffers: Fixed-size allocation prevents garbage collector pauses during continuous 30/60 FPS loops.\n" +
-                            "• Sub-5ms vision downscaling: Processes a normalized 160x90 grid for instant edge/color segmentation on Android CPU cores.",
+                            "• Concurrency guard: Atomic locks prevent duplicate stroke collisions and stuck touches.",
                     fontSize = 11.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
         }
 
-        // Implemented vs Tested vs Pending Feature Matrix
+        // Android Accessibility Limitations & Technical Facts Card
         Card(
             modifier = Modifier.fillMaxWidth(),
             colors = CardDefaults.cardColors(containerColor = DarkSurfaceElevated),
@@ -143,7 +142,34 @@ fun ArchitectureScreen(
         ) {
             Column(modifier = Modifier.padding(16.dp)) {
                 Text(
-                    text = "SYSTEM CAPABILITY MATRIX",
+                    text = "ANDROID TOUCH & ACCESSIBILITY TECHNICAL FACTS",
+                    fontSize = 11.sp,
+                    fontWeight = FontWeight.Bold,
+                    color = AmberPrimary,
+                    letterSpacing = 1.sp
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = "1. Sandbox Boundary: Android prohibits one app from injecting MotionEvents into another without AccessibilityService.dispatchGesture(), Shizuku (ADB), or Root.\n\n" +
+                            "2. Dispatch Gesture Capabilities: Supports tap (short stroke), hold (extended duration stroke), and simultaneous dual-touch (multiple StrokeDescriptions in a single GestureDescription).\n\n" +
+                            "3. Gesture Queue Limitations: Android only processes one GestureDescription at a time. Overlapping requests cause cancellation. Our InputController uses an atomic concurrency lock to ensure strokes never collide.\n\n" +
+                            "4. Safe Cancellation: When Stop is pressed, active sequence jobs are canceled and cancelPendingGestures() drains callbacks immediately.",
+                    fontSize = 11.sp,
+                    fontFamily = FontFamily.Monospace,
+                    color = MaterialTheme.colorScheme.onSurface
+                )
+            }
+        }
+
+        // Capability Matrix
+        Card(
+            modifier = Modifier.fillMaxWidth(),
+            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant),
+            border = androidx.compose.foundation.BorderStroke(1.dp, CardBorder)
+        ) {
+            Column(modifier = Modifier.padding(16.dp)) {
+                Text(
+                    text = "PART 3 CAPABILITY MATRIX",
                     fontSize = 11.sp,
                     fontWeight = FontWeight.Bold,
                     color = MaterialTheme.colorScheme.primary,
@@ -153,44 +179,45 @@ fun ArchitectureScreen(
                 Spacer(modifier = Modifier.height(12.dp))
 
                 StatusSection(
-                    title = "[IMPLEMENTED] Core Modules",
+                    title = "[VERIFIED & IMPLEMENTED] Real Touch & Automation",
                     titleColor = CyberGreen,
                     items = listOf(
-                        "Android MediaProjection Foreground Service (API 29+/34+ compliant with FOREGROUND_SERVICE_MEDIA_PROJECTION)",
-                        "In-memory frame acquisition without saving images to flash storage",
-                        "Game-specific Level Devil computer vision detector with color segmentation & inter-frame temporal differencing for dynamic traps",
-                        "Decoupled GameAgent interface with discrete action space (WAIT, LEFT, RIGHT, JUMP, DUAL-ACTION, RELEASE)",
-                        "Tabular Q-Learning policy with tile-discretized state space and Bellman TD-control update loop",
-                        "Reward function rewarding progress toward exit door and penalizing pit/spike collisions",
-                        "Room Database model checkpoint saving, restoring, and session tracking",
-                        "AccessibilityService gesture dispatcher with dispatchTap() and dispatchDualTap()",
-                        "Touch coordinate calibration matrix and OS gesture self-test verification system",
-                        "Real-time Jetpack Compose telemetry dashboard (FPS, capture latency, vision latency, RL inference, total latency)"
+                        "Tap, Hold, and Release gesture dispatching via LevelDevilAccessibilityService",
+                        "Simultaneous dual-touch (holding Left/Right while tapping Jump) in a single GestureDescription",
+                        "Safe automation lifecycle: Explicit user Start, Stop, Pause, Resume with zero auto-start on launch",
+                        "Emergency stroke cancellation and concurrency lock preventing stuck touches or duplicate strokes",
+                        "Continuous seed-guided vision tracking: initializes from player seed and tracks actual position/velocity",
+                        "Spatial lookahead identifying next obstacle and platform ahead of player",
+                        "Automated decision pause when player detection is lost or obstructed (no fake detections)",
+                        "Persistent calibration (all 8 coordinates: Left, Right, Jump, Player Seed + timing settings) in SharedPreferences",
+                        "Configurable tap duration, hold duration, and sequence delays"
                     )
                 )
 
                 Spacer(modifier = Modifier.height(12.dp))
 
                 StatusSection(
-                    title = "[TESTED] Verification & Calibration",
+                    title = "[TESTED] Unit & Robolectric Suite",
                     titleColor = CyberCyan,
                     items = listOf(
-                        "Synthetic Level Devil frame generator simulating game geometry, platforms, player block, spikes, exit door, and dynamic traps",
-                        "Local JVM Robolectric unit test suite verifying string resources, vision detector accuracy, and Q-learning policy updates",
-                        "Full Android APK compilation and packaging tested and passing on AGP 9.1.1 + Kotlin 2.2.10",
-                        "Latency benchmarker validating sub-20ms end-to-end loop latency"
+                        "Coordinate normalization across varying screen resolutions and aspect ratios",
+                        "Tap, hold, release, and cancellation lifecycle",
+                        "Automation state transitions (STOPPED -> RUNNING -> PAUSED -> RESUME -> STOPPED)",
+                        "Input failure handling when Accessibility Service is unavailable",
+                        "Seed-to-observation player tracking and velocity estimation",
+                        "Full Android APK compilation and packaging verified (AGP 9.1.1 + Kotlin 2.2.10)"
                     )
                 )
 
                 Spacer(modifier = Modifier.height(12.dp))
 
                 StatusSection(
-                    title = "[PENDING] Phase 2 Extensions",
-                    titleColor = AmberPrimary,
+                    title = "[REMAINING BLOCKERS FOR PHYSICAL LEVEL DEVIL PLAY]",
+                    titleColor = CyberRed,
                     items = listOf(
-                        "Deep Q-Network (DQN) or lightweight TFLite neural policy export for complex trap mechanics",
-                        "Optional cloud reasoning: High-level Gemini multimodal strategic guidance across puzzle stages, cleanly decoupled from the 60 FPS real-time control loop",
-                        "Automated OCR level number recognition and retry prompt detection"
+                        "Device Authorization: User must manually enable 'Level Devil AI Touch Dispatcher' in Android System Settings -> Accessibility on their device",
+                        "Screen Capture Authorization: User must grant MediaProjection permission in the system popup",
+                        "Level Devil Game Installation: The Level Devil APK must be installed and running in foreground on the device"
                     )
                 )
             }

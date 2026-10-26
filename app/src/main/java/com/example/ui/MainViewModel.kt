@@ -3,12 +3,11 @@ package com.example.ui
 import android.app.Activity
 import android.content.Context
 import android.content.Intent
-import android.media.projection.MediaProjectionManager
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.LevelDevilApplication
 import com.example.agent.PlayerAction
-import com.example.input.InputStatus
+import com.example.input.ActionStep
 import com.example.pipeline.DashboardState
 import com.example.pipeline.PipelineSourceMode
 import com.example.service.ScreenCaptureService
@@ -28,6 +27,24 @@ class MainViewModel : ViewModel() {
 
     fun dismissFeedback() {
         _userFeedback.value = null
+    }
+
+    // --- Automation Lifecycle Controls ---
+
+    fun startAutomation() {
+        pipeline.startAutomation()
+    }
+
+    fun stopAutomation() {
+        pipeline.stopAutomation()
+    }
+
+    fun pauseAutomation() {
+        pipeline.pauseAutomation()
+    }
+
+    fun resumeAutomation() {
+        pipeline.resumeAutomation()
     }
 
     fun toggleTraining() {
@@ -80,18 +97,32 @@ class MainViewModel : ViewModel() {
         jumpX: Float, jumpY: Float, playerSeedX: Float, playerSeedY: Float
     ) {
         pipeline.inputController.calibration.apply {
-            leftBtnX = leftX.coerceIn(0f, 1f)
-            leftBtnY = leftY.coerceIn(0f, 1f)
-            rightBtnX = rightX.coerceIn(0f, 1f)
-            rightBtnY = rightY.coerceIn(0f, 1f)
-            jumpBtnX = jumpX.coerceIn(0f, 1f)
-            jumpBtnY = jumpY.coerceIn(0f, 1f)
+            this.leftBtnX = leftX.coerceIn(0f, 1f)
+            this.leftBtnY = leftY.coerceIn(0f, 1f)
+            this.rightBtnX = rightX.coerceIn(0f, 1f)
+            this.rightBtnY = rightY.coerceIn(0f, 1f)
+            this.jumpBtnX = jumpX.coerceIn(0f, 1f)
+            this.jumpBtnY = jumpY.coerceIn(0f, 1f)
             this.playerSeedX = playerSeedX.coerceIn(0f, 1f)
             this.playerSeedY = playerSeedY.coerceIn(0f, 1f)
         }
         pipeline.inputController.saveCalibration()
         pipeline.publishCalibration()
-        _userFeedback.value = "Calibration saved on this device, including the player tracking seed."
+        _userFeedback.value = "Calibration saved on device, including player tracking seed."
+    }
+
+    fun updateTimingSettings(tapMs: Long, holdMs: Long, seqDelayMs: Long) {
+        pipeline.updateTimings(tapMs, holdMs, seqDelayMs)
+        _userFeedback.value = "Touch action timings updated: Tap=${tapMs}ms, Hold=${holdMs}ms."
+    }
+
+    fun executeTestSequence(screenWidth: Int, screenHeight: Int) {
+        val steps = listOf(
+            ActionStep(PlayerAction.MOVE_RIGHT, durationMs = pipeline.inputController.holdDurationMs, delayAfterMs = 100L),
+            ActionStep(PlayerAction.JUMP, durationMs = pipeline.inputController.tapDurationMs, delayAfterMs = 120L),
+            ActionStep(PlayerAction.RELEASE, durationMs = 0L, delayAfterMs = 50L)
+        )
+        pipeline.executeTestSequence(steps, screenWidth, screenHeight)
     }
 
     fun stopScreenCapture(context: Context) {
