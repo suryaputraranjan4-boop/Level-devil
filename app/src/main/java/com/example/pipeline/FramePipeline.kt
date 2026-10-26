@@ -775,8 +775,9 @@ class FramePipeline(
             val checkpointAgent = if (_state.value.sourceMode == PipelineSourceMode.SYNTHETIC_SIMULATION) simulationAgent else gameAgent
             val serialized = checkpointAgent.saveCheckpoint()
             val metrics = checkpointAgent.getMetrics()
+            val checkpointPrefix = if (_state.value.sourceMode == PipelineSourceMode.SYNTHETIC_SIMULATION) "[SIM] " else "[LIVE] "
             val entity = CheckpointEntity(
-                name = name,
+                name = checkpointPrefix + name,
                 episodeCount = metrics.totalEpisodes,
                 winCount = metrics.wins,
                 deathCount = metrics.deaths,
@@ -793,8 +794,9 @@ class FramePipeline(
 
     suspend fun loadLatestCheckpoint(): Boolean = withContext(Dispatchers.IO) {
         try {
-            val latest = database.appDao().getLatestCheckpoint() ?: return@withContext false
-            val checkpointAgent = if (_state.value.sourceMode == PipelineSourceMode.SYNTHETIC_SIMULATION) simulationAgent else gameAgent
+            val isSimulation = _state.value.sourceMode == PipelineSourceMode.SYNTHETIC_SIMULATION
+            val latest = database.appDao().getLatestCheckpointForMode(isSimulation) ?: return@withContext false
+            val checkpointAgent = if (isSimulation) simulationAgent else gameAgent
             val success = checkpointAgent.loadCheckpoint(latest.serializedQTable)
             if (success) {
                 _state.value = _state.value.copy(
