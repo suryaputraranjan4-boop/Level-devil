@@ -199,8 +199,8 @@ fun MainAppContent(
                     state = state,
                     onOpenAccessibilitySettings = { viewModel.openAccessibilitySettings() },
                     onRunSelfTest = { w, h -> viewModel.runInputSelfTest(w, h) },
-                    onUpdateCalibration = { lx, ly, rx, ry, jx, jy ->
-                        viewModel.updateCalibration(lx, ly, rx, ry, jx, jy)
+                    onUpdateCalibration = { lx, ly, rx, ry, jx, jy, sx, sy ->
+                        viewModel.updateCalibration(lx, ly, rx, ry, jx, jy, sx, sy)
                     }
                 )
                 3 -> ArchitectureScreen(
