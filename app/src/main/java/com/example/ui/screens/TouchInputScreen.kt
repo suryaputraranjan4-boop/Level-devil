@@ -249,7 +249,8 @@ fun TouchInputScreen(
                                         Offset(jumpX * size.width, jumpY * size.height),
                                         Offset(playerSeedX * size.width, playerSeedY * size.height)
                                     )
-                                    activeHandle = points.indices.minByOrNull { (points[it] - touch).getDistance() } ?: -1
+                                    val nearest = points.indices.minByOrNull { (points[it] - touch).getDistance() }
+                                    activeHandle = if (nearest != null && (points[nearest] - touch).getDistance() <= 48f) nearest else -1
                                 },
                                 onDragEnd = { activeHandle = -1 },
                                 onDragCancel = { activeHandle = -1 },
@@ -313,17 +314,17 @@ fun TouchInputScreen(
 
                 // Coordinate Sliders
                 Text("Left Arrow Button (X: ${(leftX * 100).toInt()}%, Y: ${(leftY * 100).toInt()}%)", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-                Slider(value = leftX, onValueChange = { leftX = it }, valueRange = 0.05f..0.45f)
+                Slider(value = leftX, onValueChange = { leftX = it }, valueRange = 0.02f..0.98f)
 
                 Spacer(modifier = Modifier.height(6.dp))
 
                 Text("Right Arrow Button (X: ${(rightX * 100).toInt()}%, Y: ${(rightY * 100).toInt()}%)", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-                Slider(value = rightX, onValueChange = { rightX = it }, valueRange = 0.15f..0.55f)
+                Slider(value = rightX, onValueChange = { rightX = it }, valueRange = 0.02f..0.98f)
 
                 Spacer(modifier = Modifier.height(6.dp))
 
                 Text("Jump Button (X: ${(jumpX * 100).toInt()}%, Y: ${(jumpY * 100).toInt()}%)", fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-                Slider(value = jumpX, onValueChange = { jumpX = it }, valueRange = 0.60f..0.95f)
+                Slider(value = jumpX, onValueChange = { jumpX = it }, valueRange = 0.02f..0.98f)
 
                 Text(
                     "Player seed (X: ${(playerSeedX * 100).toInt()}%, Y: ${(playerSeedY * 100).toInt()}%) — drag the green marker onto the player before capture starts.",
