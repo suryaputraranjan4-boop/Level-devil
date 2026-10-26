@@ -120,6 +120,7 @@ class FramePipeline(
     val gameAgent: GameAgent = QLearningAgent()
     private val simulationAgent: GameAgent = QLearningAgent()
     val rewardFunction = RewardFunction()
+    private val simulationRewardFunction = RewardFunction()
     val inputController = InputController(context)
     val syntheticGenerator = SyntheticLevelDevilFrameGenerator()
 
@@ -277,6 +278,10 @@ class FramePipeline(
         if (_state.value.automationState == AutomationState.RUNNING) {
             stopAutomation("Source mode changed. Automation stopped.")
         }
+        pendingLiveAction = null
+        recentActionHistory.clear()
+        rewardFunction.reset()
+        simulationRewardFunction.reset()
         _state.value = _state.value.copy(sourceMode = mode)
         if (mode == PipelineSourceMode.SYNTHETIC_SIMULATION) {
             startSimulationRunner()
@@ -458,7 +463,7 @@ class FramePipeline(
             var lastOutcomeVal = _state.value.lastOutcome
 
             if (isTraining && isSim && previousObservation != null && previousState != null && previousAction != null) {
-                val rewardDetail = rewardFunction.calculateRewardDetail(
+                val rewardDetail = simulationRewardFunction.calculateRewardDetail(
                     prevObs = previousObservation!!,
                     currObs = currObs,
                     actionDispatched = true,
@@ -532,7 +537,7 @@ class FramePipeline(
                     }
                 }
                 if (isTerminal) {
-                    rewardFunction.reset()
+                    simulationRewardFunction.reset()
                     recentActionHistory.clear()
                 }
             } else if (!isSim) {
@@ -807,6 +812,7 @@ class FramePipeline(
         gameAgent.resetPolicy()
         simulationAgent.resetPolicy()
         rewardFunction.reset()
+        simulationRewardFunction.reset()
         recentActionHistory.clear()
         simSteps = 0L
         simEpisodes = 0
