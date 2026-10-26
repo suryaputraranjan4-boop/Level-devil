@@ -508,11 +508,17 @@ class FramePipeline(
                         EpisodeOutcome.UNKNOWN, EpisodeOutcome.IN_PROGRESS -> simUnknowns++
                     }
                 }
-                if (rewardDetail.outcome == EpisodeOutcome.DEATH && pBox != null) {
+                val failureBox = pBox ?: previousObservation?.playerBox
+                val failureHazard = nearestHazard
+                    ?: previousObservation?.detectedObjects?.firstOrNull {
+                        it.type == ObjectType.SPIKE || it.type == ObjectType.MOVING_TRAP
+                    }
+                if (rewardDetail.outcome == EpisodeOutcome.DEATH && failureBox != null) {
                     val trace = FailureTrace(
                         levelNumber = _state.value.currentLevel,
-                        deathPosition = PointF(pBox.centerX(), pBox.centerY()),
-                        nearestHazardPosition = nearestHazard?.boundingBox?.let {
+                        // Death screens can hide the player; use the last observed position.
+                        deathPosition = PointF(failureBox.centerX(), failureBox.centerY()),
+                        nearestHazardPosition = failureHazard?.boundingBox?.let {
                             PointF(it.centerX(), it.centerY())
                         },
                         recentActions = recentActionHistory.toList(),
@@ -583,11 +589,17 @@ class FramePipeline(
                             if (recentActionHistory.size >= 5) recentActionHistory.removeFirst()
                             recentActionHistory.addLast(pending.action)
                         }
-                        if (rewardDetail.outcome == EpisodeOutcome.DEATH && pBox != null) {
+                        val failureBox = pBox ?: pending.observation.playerBox
+                        val failureHazard = nearestHazard
+                            ?: pending.observation.detectedObjects.firstOrNull {
+                                it.type == ObjectType.SPIKE || it.type == ObjectType.MOVING_TRAP
+                            }
+                        if (rewardDetail.outcome == EpisodeOutcome.DEATH && failureBox != null) {
                             val trace = FailureTrace(
                                 levelNumber = _state.value.currentLevel,
-                                deathPosition = PointF(pBox.centerX(), pBox.centerY()),
-                                nearestHazardPosition = nearestHazard?.boundingBox?.let {
+                                // Death screens can hide the player; use the last observed position.
+                                deathPosition = PointF(failureBox.centerX(), failureBox.centerY()),
+                                nearestHazardPosition = failureHazard?.boundingBox?.let {
                                     PointF(it.centerX(), it.centerY())
                                 },
                                 recentActions = recentActionHistory.toList(),
