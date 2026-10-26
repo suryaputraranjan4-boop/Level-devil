@@ -282,6 +282,7 @@ class FramePipeline(
         recentActionHistory.clear()
         rewardFunction.reset()
         simulationRewardFunction.reset()
+        visionDetector.resetTracker()
         _state.value = _state.value.copy(sourceMode = mode)
         if (mode == PipelineSourceMode.SYNTHETIC_SIMULATION) {
             startSimulationRunner()
@@ -663,7 +664,7 @@ class FramePipeline(
                 currentEpsilon = mainMetrics.currentEpsilon,
                 winRate = if (simWins + simDeaths > 0) (simWins.toFloat() / (simWins + simDeaths)) * 100f else 0f,
                 qTableSize = mainMetrics.qTableSize,
-                actionsSelected = simSteps,
+                actionsSelected = mainMetrics.actionsSelected,
                 actionsDispatched = 0L,
                 actionsRejected = 0L,
                 rollingAverageReward = simRollingAvg
